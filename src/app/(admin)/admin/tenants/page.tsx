@@ -1,0 +1,111 @@
+"use client";
+
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { PageHeader } from "@/components/shared/page-header";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { EmptyState } from "@/components/shared/empty-state";
+import { LoadingTable } from "@/components/shared/loading";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { formatDate } from "@/lib/utils";
+
+export default function AdminTenantsPage() {
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState("");
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-tenants", page, statusFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), pageSize: "20" });
+      if (statusFilter) params.set("status", statusFilter);
+      const res = await fetch(`/api/admin/tenants?${params}`);
+      return res.json();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const res = await fetch("/api/admin/tenants", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-tenants"] }),
+  });
+
+  return (
+    <div>
+      <PageHeader title="Tenants" description="Manage all business tenants" />
+      <div className="flex flex-wrap gap-3 mb-4">
+        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+          <option value="">All Statuses</option>
+          <option value="ONBOARDING">Onboarding</option>
+          <option value="ACTIVE">Active</option>
+          <option value="SUSPENDED">Suspended</option>
+          <option value="DISABLED">Disabled</option>
+        </Select>
+      </div>
+
+      {isLoading ? (
+        <LoadingTable />
+      ) : !data?.data?.length ? (
+        <EmptyState icon={<Building2 className="h-12 w-12" />} title="No tenants" description="Tenants will appear here when they register." />
+      ) : (
+        <>
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Business</TableHead>
+                  <TableHead>Slug</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Users</TableHead>
+                  <TableHead>Calls</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.data.map((tenant: any) => (
+                  <TableRow key={tenant.id}>
+                    <TableCell className="font-medium">{tenant.name}</TableCell>
+                    <TableCell className="text-sm font-mono">{tenant.slug}</TableCell>
+                    <TableCell><StatusBadge status={tenant.status} /></TableCell>
+                    <TableCell className="text-sm">{tenant.subscription?.plan?.name || "None"}</TableCell>
+                    <TableCell className="text-sm">{tenant._count?.users || 0}</TableCell>
+                    <TableCell className="text-sm">{tenant._count?.calls || 0}</TableCell>
+                    <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
+                    <TableCell>
+                      <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
+                        <option value="ONBOARDING">Onboarding</option>
+                        <option value="ACTIVE">Active</option>
+                        <option value="SUSPENDED">Suspended</option>
+                        <option value="DISABLED">Disabled</option>
+                      </Select>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {data.totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <p className="text-sm text-muted-foreground">Page {data.page} of {data.totalPages} ({data.total} total)</p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page <= 1}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="outline" size="sm" onClick={() => setPage(page + 1)} disabled={page >= data.totalPages}><ChevronRight className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

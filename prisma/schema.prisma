@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  TENANT_OWNER
+  TENANT_STAFF
+}
+
+enum TenantStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum CallStatus {
+  MISSED
+  ANSWERED
+  FAILED
+  BUSY
+  NO_ANSWER
+}
+
+enum IvrResponse {
+  CALLBACK
+  COMPLAINT
+  NO_RESPONSE
+  INVALID
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ComplaintCategory {
+  SERVICE_QUALITY
+  PRICING
+  WAIT_TIME
+  STAFF_BEHAVIOR
+  OTHER
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  UNDELIVERED
+}
+
+enum SmsType {
+  BOOKING_LINK
+  COMPLAINT_LINK
+  APPOINTMENT_CONFIRMATION
+  APPOINTMENT_REMINDER
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum OnboardingStep {
+  BUSINESS_PROFILE
+  TWILIO_CONFIG
+  SERVICES
+  SUBSCRIPTION
+  REVIEW
+}
+
+// ─── Models ──────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String
+  password       String
+  phone          String?
+  role           UserRole  @default(TENANT_OWNER)
+  emailVerified  DateTime?
+  image          String?
+  tenantId       String?
+  tenant         Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+model Tenant {
+  id                  String         @id @default(cuid())
+  name                String
+  slug                String         @unique
+  email               String
+  phone               String?
+  address             String?
+  city                String?
+  state               String?
+  zipCode             String?
+  country             String?        @default("US")
+  logoUrl             String?
+  description         String?
+  website             String?
+  status              TenantStatus   @default(ONBOARDING)
+  onboardingStep      OnboardingStep @default(BUSINESS_PROFILE)
+
+  // Twilio Configuration
+  twilioAccountSid    String?
+  twilioAuthToken     String?
+  twilioPhoneNumber   String?
+  forwardingNumber    String?
+  useSharedTwilio     Boolean        @default(true)
+  ivrGreeting         String?        @default("Thank you for calling. We missed your call.")
+  ivrCallbackMessage  String?        @default("Press 1 if you would like us to call you back.")
+  ivrComplaintMessage String?        @default("Press 2 to submit a complaint or feedback.")
+  dialTimeout         Int            @default(20)
+
+  // Stripe
+  stripeCustomerId    String?        @unique
+
+  // Relations
+  users               User[]
+  services            Service[]
+  calls               Call[]
+  appointments        Appointment[]
+  complaints          Complaint[]
+  smsLogs             SmsLog[]
+  businessHours       BusinessHours[]
+  subscription        Subscription?
+
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([slug])
+  @@index([status])
+}
+
+model Service {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  duration      Int           @default(60) // in minutes
+  price         Float?
+  isActive      Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  tenantId      String
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([tenantId])
+}
+
+model Call {
+  id              String      @id @default(cuid())
+  tenantId        String
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  twilioCallSid   String?     @unique
+  callerNumber    String
+  callerName      String?
+  status          CallStatus  @default(MISSED)
+  ivrResponse     IvrResponse @default(NO_RESPONSE)
+  ivrDigit        String?
+  duration        Int?        // in seconds
+  recordingUrl    String?
+  smsLogs         SmsLog[]
+  complaints      Complaint[]
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([tenantId])
+  @@index([callerNumber])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model Appointment {
+  id              String            @id @default(cuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  serviceId       String
+  service         Service           @relation(fields: [serviceId], references: [id])
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  date            DateTime
+  startTime       String            // "09:00"
+  endTime         String            // "10:00"
+  status          AppointmentStatus @default(PENDING)
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([tenantId])
+  @@index([date])
+  @@index([status])
+  @@index([customerPhone])
+}
+
+model Complaint {
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  callId          String?
+  call            Call?            @relation(fields: [callId], references: [id])
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  category        ComplaintCategory @default(OTHER)
+  description     String
+  status          ComplaintStatus  @default(OPEN)
+  resolution      String?
+  notes           String?
+  referenceNumber String           @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([referenceNumber])
+}
+
+model SmsLog {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  callId          String?
+  call            Call?     @relation(fields: [callId], references: [id])
+  twilioMessageSid String?  @unique
+  toNumber        String
+  fromNumber      String
+  body            String
+  type            SmsType   @default(CUSTOM)
+  status          SmsStatus @default(QUEUED)
+  errorCode       String?
+  errorMessage    String?
+  sentAt          DateTime  @default(now())
+  deliveredAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([callId])
+  @@index([status])
+}
+
+model BusinessHours {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  day        DayOfWeek
+  isOpen     Boolean   @default(true)
+  openTime   String    @default("09:00")
+  closeTime  String    @default("17:00")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, day])
+  @@index([tenantId])
+}
+
+model Plan {
+  id                String         @id @default(cuid())
+  name              String
+  description       String?
+  price             Float
+  interval          String         @default("month") // "month" or "year"
+  stripePriceId     String?        @unique
+  maxCalls          Int            @default(100)
+  maxSms            Int            @default(100)
+  maxServices       Int            @default(10)
+  maxStaff          Int            @default(3)
+  features          String[]       @default([])
+  isActive          Boolean        @default(true)
+  sortOrder         Int            @default(0)
+  subscriptions     Subscription[]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model Subscription {
+  id                    String             @id @default(cuid())
+  tenantId              String             @unique
+  tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId                String
+  plan                  Plan               @relation(fields: [planId], references: [id])
+  stripeSubscriptionId  String?            @unique
+  stripePriceId         String?
+  status                SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean            @default(false)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model PlatformSettings {
+  id                    String   @id @default("platform-settings")
+  // Shared Twilio
+  sharedTwilioSid       String?
+  sharedTwilioToken     String?
+  sharedTwilioNumber    String?
+  // Default IVR Messages
+  defaultIvrGreeting    String?  @default("Thank you for calling. We missed your call.")
+  defaultIvrCallback    String?  @default("Press 1 if you would like us to call you back.")
+  defaultIvrComplaint   String?  @default("Press 2 to submit a complaint or feedback.")
+  // Stripe
+  stripeSecretKey       String?
+  stripePublishableKey  String?
+  stripeWebhookSecret   String?
+  // General
+  maintenanceMode       Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
