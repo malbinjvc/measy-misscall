@@ -9,7 +9,8 @@ import { LoadingTable } from "@/components/shared/loading";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Building2, ChevronLeft, ChevronRight, Check, X } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
 export default function AdminTenantsPage() {
@@ -28,11 +29,11 @@ export default function AdminTenantsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+    mutationFn: async (payload: { id: string; status?: string; assignedTwilioNumber?: string }) => {
       const res = await fetch("/api/admin/tenants", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status }),
+        body: JSON.stringify(payload),
       });
       return res.json();
     },
@@ -63,10 +64,10 @@ export default function AdminTenantsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Business</TableHead>
-                  <TableHead>Slug</TableHead>
+                  <TableHead>Business Phone</TableHead>
+                  <TableHead>Assigned Twilio #</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Plan</TableHead>
-                  <TableHead>Users</TableHead>
                   <TableHead>Calls</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Actions</TableHead>
@@ -74,23 +75,7 @@ export default function AdminTenantsPage() {
               </TableHeader>
               <TableBody>
                 {data.data.map((tenant: any) => (
-                  <TableRow key={tenant.id}>
-                    <TableCell className="font-medium">{tenant.name}</TableCell>
-                    <TableCell className="text-sm font-mono">{tenant.slug}</TableCell>
-                    <TableCell><StatusBadge status={tenant.status} /></TableCell>
-                    <TableCell className="text-sm">{tenant.subscription?.plan?.name || "None"}</TableCell>
-                    <TableCell className="text-sm">{tenant._count?.users || 0}</TableCell>
-                    <TableCell className="text-sm">{tenant._count?.calls || 0}</TableCell>
-                    <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
-                    <TableCell>
-                      <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
-                        <option value="ONBOARDING">Onboarding</option>
-                        <option value="ACTIVE">Active</option>
-                        <option value="SUSPENDED">Suspended</option>
-                        <option value="DISABLED">Disabled</option>
-                      </Select>
-                    </TableCell>
-                  </TableRow>
+                  <TenantRow key={tenant.id} tenant={tenant} updateMutation={updateMutation} />
                 ))}
               </TableBody>
             </Table>
@@ -107,5 +92,64 @@ export default function AdminTenantsPage() {
         </>
       )}
     </div>
+  );
+}
+
+function TenantRow({ tenant, updateMutation }: { tenant: any; updateMutation: any }) {
+  const [editing, setEditing] = useState(false);
+  const [twilioNumber, setTwilioNumber] = useState(tenant.assignedTwilioNumber || "");
+
+  function saveTwilioNumber() {
+    updateMutation.mutate({ id: tenant.id, assignedTwilioNumber: twilioNumber });
+    setEditing(false);
+  }
+
+  function cancelEdit() {
+    setTwilioNumber(tenant.assignedTwilioNumber || "");
+    setEditing(false);
+  }
+
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{tenant.name}</TableCell>
+      <TableCell className="text-sm font-mono">{tenant.businessPhoneNumber || "—"}</TableCell>
+      <TableCell>
+        {editing ? (
+          <div className="flex items-center gap-1">
+            <Input
+              className="h-7 w-36 text-xs font-mono"
+              value={twilioNumber}
+              onChange={(e) => setTwilioNumber(e.target.value)}
+              placeholder="+1..."
+            />
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={saveTwilioNumber}>
+              <Check className="h-3 w-3" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={cancelEdit}>
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        ) : (
+          <span
+            className="text-sm font-mono cursor-pointer hover:text-primary"
+            onClick={() => setEditing(true)}
+          >
+            {tenant.assignedTwilioNumber || "Click to assign"}
+          </span>
+        )}
+      </TableCell>
+      <TableCell><StatusBadge status={tenant.status} /></TableCell>
+      <TableCell className="text-sm">{tenant.subscription?.plan?.name || "None"}</TableCell>
+      <TableCell className="text-sm">{tenant._count?.calls || 0}</TableCell>
+      <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
+      <TableCell>
+        <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
+          <option value="ONBOARDING">Onboarding</option>
+          <option value="ACTIVE">Active</option>
+          <option value="SUSPENDED">Suspended</option>
+          <option value="DISABLED">Disabled</option>
+        </Select>
+      </TableCell>
+    </TableRow>
   );
 }

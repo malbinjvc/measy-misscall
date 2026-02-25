@@ -30,14 +30,7 @@ export const businessProfileSchema = z.object({
   state: z.string().optional(),
   zipCode: z.string().optional(),
   description: z.string().optional(),
-});
-
-export const twilioConfigSchema = z.object({
-  useSharedTwilio: z.boolean(),
-  twilioAccountSid: z.string().optional(),
-  twilioAuthToken: z.string().optional(),
-  twilioPhoneNumber: z.string().optional(),
-  forwardingNumber: z.string().min(10, "Forwarding number is required"),
+  businessPhoneNumber: z.string().min(10, "Business phone number is required"),
 });
 
 export const serviceSchema = z.object({
@@ -153,7 +146,6 @@ export const platformSettingsSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type BusinessProfileInput = z.infer<typeof businessProfileSchema>;
-export type TwilioConfigInput = z.infer<typeof twilioConfigSchema>;
 export type ServiceInput = z.infer<typeof serviceSchema>;
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export type UpdateAppointmentInput = z.infer<typeof updateAppointmentSchema>;

@@ -5,7 +5,6 @@ import prisma from "@/lib/prisma";
 
 const STEP_ORDER = [
   "BUSINESS_PROFILE",
-  "TWILIO_CONFIG",
   "SERVICES",
   "SUBSCRIPTION",
   "REVIEW",
@@ -35,21 +34,7 @@ export async function POST(req: NextRequest) {
             state: data.state || null,
             zipCode: data.zipCode || null,
             description: data.description || null,
-            onboardingStep: "TWILIO_CONFIG",
-          },
-        });
-        break;
-      }
-
-      case "TWILIO_CONFIG": {
-        await prisma.tenant.update({
-          where: { id: tenantId },
-          data: {
-            useSharedTwilio: data.useSharedTwilio,
-            twilioAccountSid: data.useSharedTwilio ? null : data.twilioAccountSid,
-            twilioAuthToken: data.useSharedTwilio ? null : data.twilioAuthToken,
-            twilioPhoneNumber: data.useSharedTwilio ? null : data.twilioPhoneNumber,
-            forwardingNumber: data.forwardingNumber,
+            businessPhoneNumber: data.businessPhoneNumber || null,
             onboardingStep: "SERVICES",
           },
         });

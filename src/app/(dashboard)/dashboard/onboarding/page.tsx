@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { LoadingPage } from "@/components/shared/loading";
 import { ONBOARDING_STEPS, DEFAULT_SERVICES } from "@/types";
 import { Check, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
@@ -86,9 +85,6 @@ export default function OnboardingPage() {
       {tenant?.onboardingStep === "BUSINESS_PROFILE" && (
         <BusinessProfileStep tenant={tenant} mutation={mutation} />
       )}
-      {tenant?.onboardingStep === "TWILIO_CONFIG" && (
-        <TwilioConfigStep tenant={tenant} mutation={mutation} />
-      )}
       {tenant?.onboardingStep === "SERVICES" && (
         <ServicesStep tenant={tenant} mutation={mutation} />
       )}
@@ -113,6 +109,7 @@ function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any 
     state: tenant?.state || "",
     zipCode: tenant?.zipCode || "",
     description: tenant?.description || "",
+    businessPhoneNumber: tenant?.businessPhoneNumber || "",
   });
 
   return (
@@ -144,6 +141,17 @@ function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any 
           </div>
         </div>
         <div className="space-y-2">
+          <Label>Business Phone Number</Label>
+          <Input
+            placeholder="+15551234567"
+            value={form.businessPhoneNumber}
+            onChange={(e) => setForm({ ...form, businessPhoneNumber: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            This is your main business phone number that customers call. You will set up call forwarding from this number to your assigned Twilio number after onboarding.
+          </p>
+        </div>
+        <div className="space-y-2">
           <Label>Address</Label>
           <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
         </div>
@@ -168,67 +176,6 @@ function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any 
         <Button
           className="w-full"
           onClick={() => mutation.mutate({ step: "BUSINESS_PROFILE", data: form })}
-          disabled={mutation.isPending}
-        >
-          {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Continue
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function TwilioConfigStep({ tenant, mutation }: { tenant: any; mutation: any }) {
-  const [form, setForm] = useState({
-    useSharedTwilio: tenant?.useSharedTwilio ?? true,
-    twilioAccountSid: tenant?.twilioAccountSid || "",
-    twilioAuthToken: tenant?.twilioAuthToken || "",
-    twilioPhoneNumber: tenant?.twilioPhoneNumber || "",
-    forwardingNumber: tenant?.forwardingNumber || "",
-  });
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Phone Setup</CardTitle>
-        <CardDescription>Configure how calls are handled</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <p className="font-medium">Use Shared Phone System</p>
-            <p className="text-sm text-muted-foreground">Use our platform&apos;s Twilio account (recommended for getting started)</p>
-          </div>
-          <Switch checked={form.useSharedTwilio} onCheckedChange={(checked) => setForm({ ...form, useSharedTwilio: checked })} />
-        </div>
-        {!form.useSharedTwilio && (
-          <div className="space-y-4 rounded-lg border p-4">
-            <div className="space-y-2">
-              <Label>Twilio Account SID</Label>
-              <Input value={form.twilioAccountSid} onChange={(e) => setForm({ ...form, twilioAccountSid: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Twilio Auth Token</Label>
-              <Input type="password" value={form.twilioAuthToken} onChange={(e) => setForm({ ...form, twilioAuthToken: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Twilio Phone Number</Label>
-              <Input value={form.twilioPhoneNumber} onChange={(e) => setForm({ ...form, twilioPhoneNumber: e.target.value })} />
-            </div>
-          </div>
-        )}
-        <div className="space-y-2">
-          <Label>Your Business Phone Number (for forwarding)</Label>
-          <Input
-            placeholder="+15551234567"
-            value={form.forwardingNumber}
-            onChange={(e) => setForm({ ...form, forwardingNumber: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">Calls will ring this number first. If unanswered, the IVR activates.</p>
-        </div>
-        <Button
-          className="w-full"
-          onClick={() => mutation.mutate({ step: "TWILIO_CONFIG", data: form })}
           disabled={mutation.isPending}
         >
           {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -405,18 +352,28 @@ function ReviewStep({ tenant, mutation, router }: { tenant: any; mutation: any; 
             <p className="font-medium text-primary">/shop/{tenant?.slug}</p>
           </div>
           <div>
-            <p className="text-sm text-muted-foreground">Forwarding Number</p>
-            <p className="font-medium">{tenant?.forwardingNumber || "Not set"}</p>
+            <p className="text-sm text-muted-foreground">Business Phone Number</p>
+            <p className="font-medium">{tenant?.businessPhoneNumber || "Not set"}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Assigned Twilio Number</p>
+            <p className="font-medium">{tenant?.assignedTwilioNumber || "Pending assignment by admin"}</p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Services</p>
             <p className="font-medium">{tenant?.services?.length || 0} services configured</p>
           </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Phone System</p>
-            <p className="font-medium">{tenant?.useSharedTwilio ? "Shared (Platform)" : "Custom Twilio"}</p>
-          </div>
         </div>
+
+        {tenant?.assignedTwilioNumber && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <p className="text-sm font-medium text-blue-900">Call Forwarding Setup</p>
+            <p className="text-sm text-blue-700 mt-1">
+              Set up call forwarding from your business phone ({tenant?.businessPhoneNumber}) to your assigned Twilio number ({tenant?.assignedTwilioNumber}) through your carrier. This ensures missed calls are handled automatically.
+            </p>
+          </div>
+        )}
+
         <Button
           className="w-full"
           onClick={() =>

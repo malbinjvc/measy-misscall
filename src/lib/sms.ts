@@ -10,8 +10,6 @@ interface SendSmsParams {
   body: string;
   type: SmsType;
   callId?: string;
-  accountSid?: string | null;
-  authToken?: string | null;
 }
 
 export async function sendSms({
@@ -21,10 +19,8 @@ export async function sendSms({
   body,
   type,
   callId,
-  accountSid,
-  authToken,
 }: SendSmsParams) {
-  const client = getTwilioClient(accountSid, authToken);
+  const client = getTwilioClient();
   const fromNumber = from || process.env.TWILIO_PHONE_NUMBER;
 
   if (!fromNumber) {

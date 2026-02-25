@@ -97,7 +97,6 @@ enum DayOfWeek {
 
 enum OnboardingStep {
   BUSINESS_PROFILE
-  TWILIO_CONFIG
   SERVICES
   SUBSCRIPTION
   REVIEW
@@ -140,16 +139,12 @@ model Tenant {
   status              TenantStatus   @default(ONBOARDING)
   onboardingStep      OnboardingStep @default(BUSINESS_PROFILE)
 
-  // Twilio Configuration
-  twilioAccountSid    String?
-  twilioAuthToken     String?
-  twilioPhoneNumber   String?
-  forwardingNumber    String?
-  useSharedTwilio     Boolean        @default(true)
-  ivrGreeting         String?        @default("Thank you for calling. We missed your call.")
-  ivrCallbackMessage  String?        @default("Press 1 if you would like us to call you back.")
-  ivrComplaintMessage String?        @default("Press 2 to submit a complaint or feedback.")
-  dialTimeout         Int            @default(20)
+  // Phone Configuration
+  assignedTwilioNumber String?
+  businessPhoneNumber  String?
+  ivrGreeting          String?        @default("Thank you for calling. We missed your call.")
+  ivrCallbackMessage   String?        @default("Press 1 if you would like us to call you back.")
+  ivrComplaintMessage  String?        @default("Press 2 to submit a complaint or feedback.")
 
   // Stripe
   stripeCustomerId    String?        @unique

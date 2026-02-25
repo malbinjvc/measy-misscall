@@ -75,11 +75,6 @@ export const ONBOARDING_STEPS: { step: OnboardingStep; label: string; descriptio
     description: "Set up your business information",
   },
   {
-    step: "TWILIO_CONFIG",
-    label: "Phone Setup",
-    description: "Configure your phone system",
-  },
-  {
     step: "SERVICES",
     label: "Services",
     description: "Add the services you offer",

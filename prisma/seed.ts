@@ -36,9 +36,8 @@ async function main() {
       description: "Full-service auto repair shop specializing in brake, tyre, and engine services.",
       status: "ACTIVE",
       onboardingStep: "REVIEW",
-      forwardingNumber: "+15551234567",
-      useSharedTwilio: true,
-      dialTimeout: 20,
+      businessPhoneNumber: "+15551234567",
+      assignedTwilioNumber: "+15559876543",
     },
   });
   console.log("Demo tenant created:", demoTenant.name);

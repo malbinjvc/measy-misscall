@@ -45,10 +45,15 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { id, status } = await req.json();
+    const { id, status, assignedTwilioNumber } = await req.json();
+
+    const updateData: any = {};
+    if (status) updateData.status = status;
+    if (assignedTwilioNumber !== undefined) updateData.assignedTwilioNumber = assignedTwilioNumber || null;
+
     const tenant = await prisma.tenant.update({
       where: { id },
-      data: { status },
+      data: updateData,
     });
 
     return NextResponse.json({ success: true, data: tenant });

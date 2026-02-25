@@ -27,9 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     const tenant = call.tenant;
-    const fromNumber = tenant.useSharedTwilio
-      ? process.env.TWILIO_PHONE_NUMBER
-      : tenant.twilioPhoneNumber;
+    const fromNumber = tenant.assignedTwilioNumber || undefined;
 
     if (digits === "1") {
       // Callback request - send SMS with booking link
@@ -42,12 +40,10 @@ export async function POST(req: NextRequest) {
       await sendSms({
         tenantId: tenant.id,
         to: call.callerNumber,
-        from: fromNumber || undefined,
+        from: fromNumber,
         body: smsBody,
         type: "BOOKING_LINK",
         callId: call.id,
-        accountSid: tenant.useSharedTwilio ? null : tenant.twilioAccountSid,
-        authToken: tenant.useSharedTwilio ? null : tenant.twilioAuthToken,
       });
 
       const twiml = buildThankYouResponse(
@@ -67,12 +63,10 @@ export async function POST(req: NextRequest) {
       await sendSms({
         tenantId: tenant.id,
         to: call.callerNumber,
-        from: fromNumber || undefined,
+        from: fromNumber,
         body: smsBody,
         type: "COMPLAINT_LINK",
         callId: call.id,
-        accountSid: tenant.useSharedTwilio ? null : tenant.twilioAccountSid,
-        authToken: tenant.useSharedTwilio ? null : tenant.twilioAuthToken,
       });
 
       const twiml = buildThankYouResponse(

@@ -48,15 +48,10 @@ export async function PATCH(req: NextRequest) {
         await prisma.tenant.update({
           where: { id: tenantId },
           data: {
-            useSharedTwilio: data.useSharedTwilio,
-            twilioAccountSid: data.useSharedTwilio ? null : data.twilioAccountSid || null,
-            twilioAuthToken: data.useSharedTwilio ? null : data.twilioAuthToken || null,
-            twilioPhoneNumber: data.useSharedTwilio ? null : data.twilioPhoneNumber || null,
-            forwardingNumber: data.forwardingNumber || null,
+            businessPhoneNumber: data.businessPhoneNumber || null,
             ivrGreeting: data.ivrGreeting || null,
             ivrCallbackMessage: data.ivrCallbackMessage || null,
             ivrComplaintMessage: data.ivrComplaintMessage || null,
-            dialTimeout: data.dialTimeout || 20,
           },
         });
         break;

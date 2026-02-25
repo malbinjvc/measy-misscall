@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, Copy, Check } from "lucide-react";
+import { Loader2, Save, Phone } from "lucide-react";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
@@ -58,7 +58,7 @@ export default function SettingsPage() {
           <BusinessHoursSettings tenant={tenant} mutation={updateMutation} />
         </TabsContent>
         <TabsContent value="twilio">
-          <TwilioSettings tenant={tenant} mutation={updateMutation} />
+          <PhoneSettings tenant={tenant} mutation={updateMutation} />
         </TabsContent>
       </Tabs>
     </div>
@@ -189,78 +189,46 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: any; mutation: an
   );
 }
 
-function TwilioSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
+function PhoneSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
   const [form, setForm] = useState({
-    useSharedTwilio: tenant?.useSharedTwilio ?? true,
-    twilioAccountSid: tenant?.twilioAccountSid || "",
-    twilioAuthToken: tenant?.twilioAuthToken || "",
-    twilioPhoneNumber: tenant?.twilioPhoneNumber || "",
-    forwardingNumber: tenant?.forwardingNumber || "",
+    businessPhoneNumber: tenant?.businessPhoneNumber || "",
     ivrGreeting: tenant?.ivrGreeting || "",
     ivrCallbackMessage: tenant?.ivrCallbackMessage || "",
     ivrComplaintMessage: tenant?.ivrComplaintMessage || "",
-    dialTimeout: tenant?.dialTimeout || 20,
   });
-  const [copied, setCopied] = useState(false);
-
-  const webhookUrl = typeof window !== "undefined" ? `${window.location.origin}/api/twilio/voice` : "";
-
-  function copyWebhookUrl() {
-    navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
 
   return (
     <Card className="mt-4">
       <CardHeader>
         <CardTitle>Phone Configuration</CardTitle>
-        <CardDescription>Configure your Twilio phone system and IVR messages</CardDescription>
+        <CardDescription>Manage your phone settings and IVR messages</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Assigned Twilio Number - read only */}
         <div className="rounded-lg border p-4 bg-muted/50">
-          <Label className="text-xs text-muted-foreground">Webhook URL (paste in Twilio console)</Label>
+          <Label className="text-xs text-muted-foreground">Assigned Twilio Number</Label>
           <div className="flex items-center gap-2 mt-1">
-            <code className="text-sm flex-1 truncate">{webhookUrl}</code>
-            <Button variant="outline" size="sm" onClick={copyWebhookUrl}>
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            </Button>
+            <Phone className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">
+              {tenant?.assignedTwilioNumber || "Not yet assigned — contact your admin"}
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <p className="font-medium">Use Shared Phone System</p>
-            <p className="text-sm text-muted-foreground">Use platform Twilio account</p>
-          </div>
-          <Switch checked={form.useSharedTwilio} onCheckedChange={(checked) => setForm({ ...form, useSharedTwilio: checked })} />
-        </div>
-
-        {!form.useSharedTwilio && (
-          <div className="space-y-4 rounded-lg border p-4">
-            <div className="space-y-2">
-              <Label>Twilio Account SID</Label>
-              <Input value={form.twilioAccountSid} onChange={(e) => setForm({ ...form, twilioAccountSid: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Twilio Auth Token</Label>
-              <Input type="password" value={form.twilioAuthToken} onChange={(e) => setForm({ ...form, twilioAuthToken: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Twilio Phone Number</Label>
-              <Input value={form.twilioPhoneNumber} onChange={(e) => setForm({ ...form, twilioPhoneNumber: e.target.value })} />
-            </div>
+        {/* Call forwarding instructions */}
+        {tenant?.assignedTwilioNumber && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <p className="text-sm font-medium text-blue-900">Call Forwarding Instructions</p>
+            <p className="text-sm text-blue-700 mt-1">
+              Forward unanswered calls from your business phone to <span className="font-mono font-semibold">{tenant.assignedTwilioNumber}</span>. Contact your phone carrier to set up conditional call forwarding (busy / no answer / unreachable).
+            </p>
           </div>
         )}
 
         <div className="space-y-2">
-          <Label>Forwarding Number</Label>
-          <Input value={form.forwardingNumber} onChange={(e) => setForm({ ...form, forwardingNumber: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label>Dial Timeout (seconds)</Label>
-          <Input type="number" value={form.dialTimeout} onChange={(e) => setForm({ ...form, dialTimeout: parseInt(e.target.value) || 20 })} className="w-24" />
+          <Label>Business Phone Number</Label>
+          <Input value={form.businessPhoneNumber} onChange={(e) => setForm({ ...form, businessPhoneNumber: e.target.value })} />
+          <p className="text-xs text-muted-foreground">Your main business phone number that customers call.</p>
         </div>
 
         <div className="space-y-2">

@@ -59,7 +59,7 @@ export default function AdminSettingsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2"><Label>Account SID</Label><Input value={form.sharedTwilioSid || ""} onChange={(e) => setForm({ ...form, sharedTwilioSid: e.target.value })} /></div>
             <div className="space-y-2"><Label>Auth Token</Label><Input type="password" value={form.sharedTwilioToken || ""} onChange={(e) => setForm({ ...form, sharedTwilioToken: e.target.value })} /></div>
-            <div className="space-y-2"><Label>Phone Number</Label><Input value={form.sharedTwilioNumber || ""} onChange={(e) => setForm({ ...form, sharedTwilioNumber: e.target.value })} /></div>
+            <p className="text-xs text-muted-foreground">Twilio phone numbers are assigned per-tenant from the Tenants page.</p>
           </CardContent>
         </Card>
 

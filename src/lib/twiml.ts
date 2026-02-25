@@ -2,21 +2,6 @@ import twilio from "twilio";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
-export function buildDialResponse(
-  forwardingNumber: string,
-  statusCallbackUrl: string,
-  timeout: number = 20
-): string {
-  const response = new VoiceResponse();
-  const dial = response.dial({
-    timeout,
-    action: statusCallbackUrl,
-    method: "POST",
-  });
-  dial.number(forwardingNumber);
-  return response.toString();
-}
-
 export function buildIvrResponse(
   gatherUrl: string,
   greeting: string,
