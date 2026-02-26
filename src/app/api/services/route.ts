@@ -14,6 +14,12 @@ export async function GET() {
     const services = await prisma.service.findMany({
       where: { tenantId: session.user.tenantId },
       orderBy: { sortOrder: "asc" },
+      include: {
+        options: {
+          orderBy: { sortOrder: "asc" },
+          include: { subOptions: { orderBy: { sortOrder: "asc" } } },
+        },
+      },
     });
 
     return NextResponse.json({ success: true, data: services });
@@ -34,8 +40,49 @@ export async function POST(req: NextRequest) {
 
     const count = await prisma.service.count({ where: { tenantId: session.user.tenantId } });
 
+    const { options, ...serviceData } = validated;
+
     const service = await prisma.service.create({
-      data: { ...validated, tenantId: session.user.tenantId, sortOrder: count },
+      data: {
+        ...serviceData,
+        tenantId: session.user.tenantId,
+        sortOrder: count,
+        ...(options?.length
+          ? {
+              options: {
+                create: options.map((opt, idx) => ({
+                  name: opt.name,
+                  description: opt.description,
+                  duration: opt.duration ?? null,
+                  price: opt.price ?? null,
+                  isActive: opt.isActive,
+                  sortOrder: idx,
+                  defaultQuantity: opt.defaultQuantity ?? 1,
+                  minQuantity: opt.minQuantity ?? 1,
+                  maxQuantity: opt.maxQuantity ?? 10,
+                  ...(opt.subOptions?.length
+                    ? {
+                        subOptions: {
+                          create: opt.subOptions.map((sub, subIdx) => ({
+                            name: sub.name,
+                            description: sub.description,
+                            price: sub.price ?? null,
+                            sortOrder: subIdx,
+                          })),
+                        },
+                      }
+                    : {}),
+                })),
+              },
+            }
+          : {}),
+      },
+      include: {
+        options: {
+          orderBy: { sortOrder: "asc" },
+          include: { subOptions: { orderBy: { sortOrder: "asc" } } },
+        },
+      },
     });
 
     return NextResponse.json({ success: true, data: service });
@@ -65,7 +112,57 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
 
-    const updated = await prisma.service.update({ where: { id }, data: validated });
+    const { options, ...serviceData } = validated;
+
+    // If options are provided, delete existing (cascade deletes sub-options) and recreate
+    if (options !== undefined) {
+      await prisma.serviceSubOption.deleteMany({
+        where: { serviceOption: { serviceId: id } },
+      });
+      await prisma.serviceOption.deleteMany({ where: { serviceId: id } });
+      if (options && options.length > 0) {
+        for (let idx = 0; idx < options.length; idx++) {
+          const opt = options[idx];
+          await prisma.serviceOption.create({
+            data: {
+              name: opt.name!,
+              description: opt.description,
+              duration: opt.duration ?? null,
+              price: opt.price ?? null,
+              isActive: opt.isActive ?? true,
+              sortOrder: idx,
+              defaultQuantity: opt.defaultQuantity ?? 1,
+              minQuantity: opt.minQuantity ?? 1,
+              maxQuantity: opt.maxQuantity ?? 10,
+              serviceId: id,
+              ...(opt.subOptions?.length
+                ? {
+                    subOptions: {
+                      create: opt.subOptions.map((sub: any, subIdx: number) => ({
+                        name: sub.name,
+                        description: sub.description,
+                        price: sub.price ?? null,
+                        sortOrder: subIdx,
+                      })),
+                    },
+                  }
+                : {}),
+            },
+          });
+        }
+      }
+    }
+
+    const updated = await prisma.service.update({
+      where: { id },
+      data: serviceData,
+      include: {
+        options: {
+          orderBy: { sortOrder: "asc" },
+          include: { subOptions: { orderBy: { sortOrder: "asc" } } },
+        },
+      },
+    });
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     return NextResponse.json({ success: false, error: "Update failed" }, { status: 500 });

@@ -140,7 +140,7 @@ model Tenant {
   onboardingStep      OnboardingStep @default(BUSINESS_PROFILE)
 
   // Phone Configuration
-  assignedTwilioNumber String?
+  assignedTwilioNumber String?       @unique
   businessPhoneNumber  String?
   ivrGreeting          String?        @default("Thank you for calling. We missed your call.")
   ivrCallbackMessage   String?        @default("Press 1 if you would like us to call you back.")
@@ -148,6 +148,10 @@ model Tenant {
 
   // Stripe
   stripeCustomerId    String?        @unique
+
+  // Hero Media
+  heroMediaUrl        String?
+  heroMediaType       String?        @default("image") // "image" or "video"
 
   // Relations
   users               User[]
@@ -158,6 +162,7 @@ model Tenant {
   smsLogs             SmsLog[]
   businessHours       BusinessHours[]
   subscription        Subscription?
+  reviews             Review[]
 
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -167,20 +172,57 @@ model Tenant {
 }
 
 model Service {
-  id            String        @id @default(cuid())
+  id            String          @id @default(cuid())
   name          String
   description   String?
-  duration      Int           @default(60) // in minutes
+  duration      Int             @default(60) // in minutes
   price         Float?
-  isActive      Boolean       @default(true)
-  sortOrder     Int           @default(0)
+  isActive      Boolean         @default(true)
+  sortOrder     Int             @default(0)
   tenantId      String
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   appointments  Appointment[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  options       ServiceOption[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   @@index([tenantId])
+}
+
+model ServiceOption {
+  id              String             @id @default(cuid())
+  name            String
+  description     String?
+  duration        Int?               // Override parent service duration (optional)
+  price           Float?             // Override parent service price (optional)
+  isActive        Boolean            @default(true)
+  sortOrder       Int                @default(0)
+  defaultQuantity Int                @default(1)
+  minQuantity     Int                @default(1)
+  maxQuantity     Int                @default(10)
+  serviceId       String
+  service         Service            @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+  subOptions      ServiceSubOption[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([serviceId])
+}
+
+model ServiceSubOption {
+  id              String        @id @default(cuid())
+  name            String
+  description     String?
+  price           Float?
+  isActive        Boolean       @default(true)
+  sortOrder       Int           @default(0)
+  serviceOptionId String
+  serviceOption   ServiceOption @relation(fields: [serviceOptionId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([serviceOptionId])
 }
 
 model Call {
@@ -213,7 +255,11 @@ model Appointment {
   tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   serviceId       String
   service         Service           @relation(fields: [serviceId], references: [id])
-  customerName    String
+  serviceOptionId    String?
+  serviceOption      ServiceOption?    @relation(fields: [serviceOptionId], references: [id])
+  quantity           Int               @default(1)
+  selectedSubOptions String[]          // Array of ServiceSubOption IDs
+  customerName       String
   customerPhone   String
   customerEmail   String?
   date            DateTime
@@ -348,4 +394,32 @@ model PlatformSettings {
   maintenanceMode       Boolean  @default(false)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+model Review {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerName    String
+  customerPhone   String
+  rating          Int      // 1-5
+  comment         String?
+  imageUrl        String?
+  isVerified      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([rating])
+}
+
+model PhoneVerification {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone, code])
 }

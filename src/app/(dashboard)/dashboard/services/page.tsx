@@ -14,11 +14,31 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Wrench, Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
+interface ServiceSubOptionForm {
+  name: string;
+  description: string;
+  price: string;
+}
+
+interface ServiceOptionForm {
+  name: string;
+  description: string;
+  price: string;
+  defaultQuantity: string;
+  minQuantity: string;
+  maxQuantity: string;
+  subOptions: ServiceSubOptionForm[];
+}
+
+const emptySubOption: ServiceSubOptionForm = { name: "", description: "", price: "" };
+const emptyOption: ServiceOptionForm = { name: "", description: "", price: "", defaultQuantity: "1", minQuantity: "1", maxQuantity: "10", subOptions: [] };
+
 export default function ServicesPage() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<any>(null);
   const [form, setForm] = useState({ name: "", description: "", duration: 60, price: 0, isActive: true });
+  const [options, setOptions] = useState<ServiceOptionForm[]>([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["services"],
@@ -67,6 +87,7 @@ export default function ServicesPage() {
   function openCreate() {
     setEditingService(null);
     setForm({ name: "", description: "", duration: 60, price: 0, isActive: true });
+    setOptions([]);
     setIsDialogOpen(true);
   }
 
@@ -79,6 +100,21 @@ export default function ServicesPage() {
       price: service.price || 0,
       isActive: service.isActive,
     });
+    setOptions(
+      (service.options || []).map((opt: any) => ({
+        name: opt.name,
+        description: opt.description || "",
+        price: opt.price?.toString() || "",
+        defaultQuantity: opt.defaultQuantity?.toString() || "1",
+        minQuantity: opt.minQuantity?.toString() || "1",
+        maxQuantity: opt.maxQuantity?.toString() || "10",
+        subOptions: (opt.subOptions || []).map((sub: any) => ({
+          name: sub.name,
+          description: sub.description || "",
+          price: sub.price?.toString() || "",
+        })),
+      }))
+    );
     setIsDialogOpen(true);
   }
 
@@ -87,11 +123,78 @@ export default function ServicesPage() {
     setEditingService(null);
   }
 
+  function addOption() {
+    setOptions([...options, { ...emptyOption }]);
+  }
+
+  function updateOption(index: number, field: string, value: string) {
+    const updated = [...options];
+    updated[index] = { ...updated[index], [field]: value };
+    setOptions(updated);
+  }
+
+  function removeOption(index: number) {
+    setOptions(options.filter((_, i) => i !== index));
+  }
+
+  function addSubOption(optionIndex: number) {
+    const updated = [...options];
+    updated[optionIndex] = {
+      ...updated[optionIndex],
+      subOptions: [...updated[optionIndex].subOptions, { ...emptySubOption }],
+    };
+    setOptions(updated);
+  }
+
+  function updateSubOption(optionIndex: number, subIndex: number, field: keyof ServiceSubOptionForm, value: string) {
+    const updated = [...options];
+    const subs = [...updated[optionIndex].subOptions];
+    subs[subIndex] = { ...subs[subIndex], [field]: value };
+    updated[optionIndex] = { ...updated[optionIndex], subOptions: subs };
+    setOptions(updated);
+  }
+
+  function removeSubOption(optionIndex: number, subIndex: number) {
+    const updated = [...options];
+    updated[optionIndex] = {
+      ...updated[optionIndex],
+      subOptions: updated[optionIndex].subOptions.filter((_, i) => i !== subIndex),
+    };
+    setOptions(updated);
+  }
+
+  function buildOptionsPayload() {
+    return options
+      .filter((opt) => opt.name.trim())
+      .map((opt, idx) => ({
+        name: opt.name.trim(),
+        description: opt.description.trim() || undefined,
+        price: opt.price ? parseFloat(opt.price) || null : null,
+        isActive: true,
+        sortOrder: idx,
+        defaultQuantity: parseInt(opt.defaultQuantity) || 1,
+        minQuantity: parseInt(opt.minQuantity) || 1,
+        maxQuantity: parseInt(opt.maxQuantity) || 10,
+        subOptions: opt.subOptions
+          .filter((sub) => sub.name.trim())
+          .map((sub) => ({
+            name: sub.name.trim(),
+            description: sub.description.trim() || undefined,
+            price: sub.price ? parseFloat(sub.price) || null : null,
+          })),
+      }));
+  }
+
   function handleSubmit() {
+    const payload = {
+      ...form,
+      options: buildOptionsPayload(),
+    };
+
     if (editingService) {
-      updateMutation.mutate({ id: editingService.id, ...form });
+      updateMutation.mutate({ id: editingService.id, ...payload });
     } else {
-      createMutation.mutate(form);
+      createMutation.mutate(payload);
     }
   }
 
@@ -122,6 +225,7 @@ export default function ServicesPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Price</TableHead>
+                <TableHead>Options</TableHead>
                 <TableHead>Active</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -131,7 +235,12 @@ export default function ServicesPage() {
                 <TableRow key={service.id}>
                   <TableCell className="font-medium">{service.name}</TableCell>
                   <TableCell className="text-sm">{service.duration} min</TableCell>
-                  <TableCell className="text-sm">{service.price ? formatCurrency(service.price) : "—"}</TableCell>
+                  <TableCell className="text-sm">{service.price ? formatCurrency(service.price) : "\u2014"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {service.options?.length > 0
+                      ? `${service.options.length} option${service.options.length > 1 ? "s" : ""}`
+                      : "\u2014"}
+                  </TableCell>
                   <TableCell>
                     <Switch
                       checked={service.isActive}
@@ -156,7 +265,7 @@ export default function ServicesPage() {
       )}
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent onClose={closeDialog}>
+        <DialogContent onClose={closeDialog} className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingService ? "Edit Service" : "Add Service"}</DialogTitle>
           </DialogHeader>
@@ -182,6 +291,122 @@ export default function ServicesPage() {
             <div className="flex items-center gap-2">
               <Switch checked={form.isActive} onCheckedChange={(checked) => setForm({ ...form, isActive: checked })} />
               <Label>Active</Label>
+            </div>
+
+            {/* Options Section */}
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-semibold">Service Options (Variants)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addOption}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Add Option
+                </Button>
+              </div>
+              {options.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No options added. Options let customers choose variants like &quot;Standard&quot; vs &quot;Premium&quot;.
+                </p>
+              )}
+              {options.map((opt, idx) => (
+                <div key={idx} className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">Option {idx + 1}</span>
+                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeOption(idx)}>
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Option name (e.g. Standard)"
+                      value={opt.name}
+                      onChange={(e) => updateOption(idx, "name", e.target.value)}
+                    />
+                    <Input
+                      placeholder="Description (optional)"
+                      value={opt.description}
+                      onChange={(e) => updateOption(idx, "description", e.target.value)}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Price ($)"
+                      value={opt.price}
+                      onChange={(e) => updateOption(idx, "price", e.target.value)}
+                    />
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Default Qty</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={opt.defaultQuantity}
+                          onChange={(e) => updateOption(idx, "defaultQuantity", e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Min Qty</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={opt.minQuantity}
+                          onChange={(e) => updateOption(idx, "minQuantity", e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Max Qty</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={opt.maxQuantity}
+                          onChange={(e) => updateOption(idx, "maxQuantity", e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Sub-Options (Add-ons) */}
+                    <div className="border-t pt-2 mt-2 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Sub-Options (Add-ons)</span>
+                        <Button type="button" variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => addSubOption(idx)}>
+                          <Plus className="h-3 w-3 mr-1" /> Add
+                        </Button>
+                      </div>
+                      {opt.subOptions.length === 0 && (
+                        <p className="text-xs text-muted-foreground">No add-ons. Add optional extras customers can select.</p>
+                      )}
+                      {opt.subOptions.map((sub, subIdx) => (
+                        <div key={subIdx} className="border rounded p-2 space-y-1.5 bg-gray-50/50">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">Add-on {subIdx + 1}</span>
+                            <Button type="button" variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeSubOption(idx, subIdx)}>
+                              <Trash2 className="h-3 w-3 text-destructive" />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <Input
+                              placeholder="Name"
+                              value={sub.name}
+                              onChange={(e) => updateSubOption(idx, subIdx, "name", e.target.value)}
+                              className="text-xs h-8"
+                            />
+                            <Input
+                              type="number"
+                              placeholder="Price ($)"
+                              value={sub.price}
+                              onChange={(e) => updateSubOption(idx, subIdx, "price", e.target.value)}
+                              className="text-xs h-8"
+                            />
+                          </div>
+                          <Input
+                            placeholder="Description (optional)"
+                            value={sub.description}
+                            onChange={(e) => updateSubOption(idx, subIdx, "description", e.target.value)}
+                            className="text-xs h-8"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
           <DialogFooter>
