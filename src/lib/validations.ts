@@ -62,8 +62,10 @@ export const createAppointmentSchema = z.object({
 });
 
 export const updateAppointmentSchema = z.object({
-  status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
+  status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]).optional(),
   notes: z.string().optional(),
+  date: z.string().optional(),
+  startTime: z.string().optional(),
 });
 
 // ─── Service Sub-Options ─────────────────────────────

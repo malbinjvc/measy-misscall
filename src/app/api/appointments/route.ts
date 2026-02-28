@@ -259,21 +259,41 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, updated: result.count });
     }
 
-    // Single update: { id: "...", status: "...", notes: "..." }
+    // Single update: { id: "...", status: "...", notes: "...", date: "...", startTime: "..." }
     const { id, ...data } = body;
     const validated = updateAppointmentSchema.parse(data);
 
     const appointment = await prisma.appointment.findFirst({
       where: { id, tenantId: session.user.tenantId },
+      include: { service: true, serviceOption: true },
     });
 
     if (!appointment) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
 
+    // Build update payload
+    const updateData: any = {};
+    if (validated.status) updateData.status = validated.status;
+    if (validated.notes !== undefined) updateData.notes = validated.notes;
+
+    // Reschedule: recalculate endTime from service duration
+    if (validated.date && validated.startTime) {
+      const duration = (appointment as any).serviceOption?.duration || (appointment as any).service.duration;
+      const totalDuration = duration * (appointment.quantity || 1);
+      const [hours, minutes] = validated.startTime.split(":").map(Number);
+      const startMinutes = hours * 60 + minutes;
+      const endMinutes = startMinutes + totalDuration;
+      const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+      updateData.date = new Date(validated.date);
+      updateData.startTime = validated.startTime;
+      updateData.endTime = endTime;
+    }
+
     const updated = await prisma.appointment.update({
       where: { id },
-      data: validated,
+      data: updateData,
       include: appointmentInclude,
     });
 

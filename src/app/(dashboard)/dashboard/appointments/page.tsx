@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Calendar, DollarSign, Clock, CheckCircle, Eye, Plus, Minus, X,
+  Calendar, CalendarSync, DollarSign, Clock, CheckCircle, Eye, Plus, Minus, X,
   ChevronLeft, ChevronRight, List, AlertTriangle, XCircle, UserX, Ban,
 } from "lucide-react";
 import {
@@ -153,6 +153,7 @@ export default function AppointmentsPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [rescheduleAppointment, setRescheduleAppointment] = useState<Appointment | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [createPrefilledDate, setCreatePrefilledDate] = useState<string | null>(null);
 
@@ -180,7 +181,7 @@ export default function AppointmentsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (body: { id: string; status?: string; notes?: string }) => {
+    mutationFn: async (body: { id: string; status?: string; notes?: string; date?: string; startTime?: string }) => {
       const res = await fetch("/api/appointments", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -328,6 +329,23 @@ export default function AppointmentsPage() {
             updateMutation.mutate({ id, ...data }, {
               onSuccess: () => setSelectedAppointment(null),
             });
+          }}
+          onReschedule={(apt) => {
+            setSelectedAppointment(null);
+            setRescheduleAppointment(apt);
+          }}
+        />
+      )}
+
+      {/* Reschedule Dialog */}
+      {rescheduleAppointment && (
+        <RescheduleDialog
+          appointment={rescheduleAppointment}
+          onClose={() => setRescheduleAppointment(null)}
+          onRescheduled={() => {
+            setRescheduleAppointment(null);
+            queryClient.invalidateQueries({ queryKey: ["appointments"] });
+            queryClient.invalidateQueries({ queryKey: ["appointments-calendar"] });
           }}
         />
       )}
@@ -720,11 +738,12 @@ function CalendarView({
 // ─── Appointment Detail Dialog ────────────────────────
 
 function AppointmentDetailDialog({
-  appointment, onClose, onUpdate,
+  appointment, onClose, onUpdate, onReschedule,
 }: {
   appointment: Appointment;
   onClose: () => void;
   onUpdate: (id: string, data: { status?: string; notes?: string }) => void;
+  onReschedule: (apt: Appointment) => void;
 }) {
   const [status, setStatus] = useState(appointment.status);
   const [notes, setNotes] = useState(appointment.notes || "");
@@ -825,13 +844,236 @@ function AppointmentDetailDialog({
           </div>
         </div>
 
+        <div className="flex justify-between gap-2 p-4 border-t">
+          <div>
+            {(appointment.status === "PENDING" || appointment.status === "CONFIRMED") && (
+              <Button variant="outline" onClick={() => onReschedule(appointment)}>
+                <CalendarSync className="h-4 w-4 mr-2" />
+                Reschedule
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Close</Button>
+            <Button
+              onClick={() => onUpdate(appointment.id, { status, notes: notes || undefined })}
+              disabled={status === appointment.status && notes === (appointment.notes || "")}
+            >
+              Save Changes
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reschedule Dialog ───────────────────────────────
+
+function RescheduleDialog({
+  appointment, onClose, onRescheduled,
+}: {
+  appointment: Appointment;
+  onClose: () => void;
+  onRescheduled: () => void;
+}) {
+  const currentDate = appointment.date.substring(0, 10);
+  const [date, setDate] = useState(currentDate);
+  const [startTime, setStartTime] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Fetch business hours + appointments for the selected date's month
+  const dateMonth = date ? date.substring(0, 7) : null;
+  const { data: bhData } = useQuery({
+    queryKey: ["business-hours-for-reschedule", dateMonth],
+    queryFn: async () => {
+      const m = dateMonth || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      const res = await fetch(`/api/appointments?mode=calendar&month=${m}`);
+      return res.json();
+    },
+  });
+
+  const appointmentsForDate: Appointment[] = useMemo(() => {
+    if (!date || !bhData?.data) return [];
+    return (bhData.data[date] || []) as Appointment[];
+  }, [date, bhData?.data]);
+
+  // Time slots based on business hours
+  const timeSlots = useMemo(() => {
+    if (!date || !bhData?.businessHours) return [];
+    const dayOfWeek = new Date(date + "T12:00:00").getDay();
+    const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+    const bh = bhData.businessHours.find((h: any) => h.day === dayNames[dayOfWeek]);
+    if (!bh || !bh.isOpen) return [];
+    return generateTimeSlots(bh.openTime, bh.closeTime, 30);
+  }, [date, bhData?.businessHours]);
+
+  // Build occupied slot map — exclude current appointment (it's being moved)
+  const occupiedSlotMap = useMemo(() => {
+    const map = new Map<number, Appointment>();
+    for (const apt of appointmentsForDate) {
+      if (apt.id === appointment.id) continue;
+      if (apt.status === "CANCELLED" || apt.status === "NO_SHOW") continue;
+      const startMin = timeStringToMinutes(apt.startTime);
+      const endMin = timeStringToMinutes(apt.endTime);
+      for (let m = startMin; m < endMin; m += 30) {
+        map.set(m, apt);
+      }
+    }
+    return map;
+  }, [appointmentsForDate, appointment.id]);
+
+  // Service duration for overlap checking
+  const serviceDuration = appointment.serviceOption
+    ? ((appointment.serviceOption as any).duration || appointment.service.duration)
+    : appointment.service.duration;
+  const totalDuration = serviceDuration * (appointment.quantity || 1);
+  const slotsNeeded = Math.ceil(totalDuration / 30);
+
+  async function handleSubmit() {
+    if (!date || !startTime) return;
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/appointments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: appointment.id, date, startTime }),
+      });
+      const result = await res.json();
+      if (!result.success) {
+        setError(result.error || "Failed to reschedule");
+        return;
+      }
+      onRescheduled();
+    } catch {
+      setError("Failed to reschedule");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const isSameSlot = date === currentDate && startTime === appointment.startTime;
+  const canSubmit = date && startTime && !submitting && !isSameSlot;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-background rounded-lg border shadow-lg w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h2 className="text-lg font-semibold">Reschedule Appointment</h2>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Current appointment info */}
+          <div className="rounded-lg bg-muted/50 p-3">
+            <p className="text-xs text-muted-foreground mb-1">Current Schedule</p>
+            <p className="text-sm font-medium">{appointment.customerName} — {appointment.service?.name}</p>
+            <p className="text-sm text-muted-foreground">
+              {formatDateUTC(appointment.date)} at {appointment.startTime} — {appointment.endTime}
+            </p>
+          </div>
+
+          {/* Date */}
+          <div>
+            <Label>New Date</Label>
+            <Input
+              className="mt-1"
+              type="date"
+              value={date}
+              onChange={(e) => { setDate(e.target.value); setStartTime(""); }}
+            />
+          </div>
+
+          {/* Time slots — color-coded grid */}
+          {date && timeSlots.length > 0 && (
+            <div>
+              <Label>New Time</Label>
+              <div className="mt-1 grid grid-cols-4 gap-2">
+                {timeSlots.map((slot) => {
+                  const slotMin = timeStringToMinutes(slot);
+                  const bookedApt = occupiedSlotMap.get(slotMin);
+
+                  // Check if selecting this slot would overlap a booked slot
+                  let wouldOverlap = false;
+                  if (!bookedApt) {
+                    for (let s = 0; s < slotsNeeded; s++) {
+                      if (occupiedSlotMap.has(slotMin + s * 30)) {
+                        wouldOverlap = true;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (bookedApt) {
+                    const statusBg: Record<string, string> = {
+                      CONFIRMED: "bg-blue-100 border-blue-400",
+                      PENDING: "bg-yellow-100 border-yellow-400",
+                      COMPLETED: "bg-green-100 border-green-400",
+                    };
+                    const style = statusBg[bookedApt.status] || "bg-gray-100 border-gray-400";
+                    return (
+                      <div
+                        key={slot}
+                        className={`rounded-md border px-2 py-1.5 text-left cursor-not-allowed ${style}`}
+                      >
+                        <p className="text-xs font-medium">{slot}</p>
+                        <p className="text-[10px] truncate">{bookedApt.customerName}</p>
+                      </div>
+                    );
+                  }
+
+                  if (wouldOverlap) {
+                    return (
+                      <div
+                        key={slot}
+                        className="rounded-md border border-muted bg-muted px-2 py-1.5 text-left opacity-50 cursor-not-allowed"
+                      >
+                        <p className="text-xs font-medium text-muted-foreground">{slot}</p>
+                        <p className="text-[10px] text-muted-foreground">Unavailable</p>
+                      </div>
+                    );
+                  }
+
+                  const isSelected = startTime === slot;
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      className={`rounded-md border px-2 py-1.5 text-left cursor-pointer transition-colors ${
+                        isSelected
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-green-300 bg-white hover:bg-green-50"
+                      }`}
+                      onClick={() => setStartTime(slot)}
+                    >
+                      <p className="text-xs font-medium">{slot}</p>
+                      <p className={`text-[10px] ${isSelected ? "text-primary-foreground/80" : "text-green-600"}`}>
+                        Available
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {date && timeSlots.length === 0 && (
+            <p className="text-sm text-muted-foreground">No available slots for this date (business closed).</p>
+          )}
+
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
+        </div>
+
         <div className="flex justify-end gap-2 p-4 border-t">
-          <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button
-            onClick={() => onUpdate(appointment.id, { status, notes: notes || undefined })}
-            disabled={status === appointment.status && notes === (appointment.notes || "")}
-          >
-            Save Changes
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!canSubmit}>
+            {submitting ? "Rescheduling..." : "Confirm Reschedule"}
           </Button>
         </div>
       </div>
