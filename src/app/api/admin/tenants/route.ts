@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { normalizePhoneNumber } from "@/lib/utils";
 
 export async function GET(req: NextRequest) {
   try {
@@ -49,7 +50,21 @@ export async function PATCH(req: NextRequest) {
 
     const updateData: any = {};
     if (status) updateData.status = status;
-    if (assignedTwilioNumber !== undefined) updateData.assignedTwilioNumber = assignedTwilioNumber || null;
+    if (assignedTwilioNumber !== undefined) {
+      const numberToAssign = normalizePhoneNumber(assignedTwilioNumber);
+      if (numberToAssign) {
+        const existing = await prisma.tenant.findFirst({
+          where: { assignedTwilioNumber: numberToAssign, id: { not: id } },
+        });
+        if (existing) {
+          return NextResponse.json(
+            { success: false, error: `This number is already assigned to "${existing.name}"` },
+            { status: 400 }
+          );
+        }
+      }
+      updateData.assignedTwilioNumber = numberToAssign;
+    }
 
     const tenant = await prisma.tenant.update({
       where: { id },

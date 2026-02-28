@@ -17,8 +17,6 @@ export async function GET() {
       missedCalls,
       totalAppointments,
       pendingAppointments,
-      totalComplaints,
-      openComplaints,
       totalSms,
       callbackRequests,
     ] = await Promise.all([
@@ -26,10 +24,8 @@ export async function GET() {
       prisma.call.count({ where: { tenantId, status: "MISSED" } }),
       prisma.appointment.count({ where: { tenantId } }),
       prisma.appointment.count({ where: { tenantId, status: "PENDING" } }),
-      prisma.complaint.count({ where: { tenantId } }),
-      prisma.complaint.count({ where: { tenantId, status: "OPEN" } }),
-      prisma.smsLog.count({ where: { tenantId } }),
-      prisma.call.count({ where: { tenantId, ivrResponse: "CALLBACK" } }),
+      prisma.smsLog.count({ where: { tenantId, type: { not: "OTP_VERIFICATION" } } }),
+      prisma.call.count({ where: { tenantId, ivrResponse: "CALLBACK", callbackHandled: false } }),
     ]);
 
     return NextResponse.json({
@@ -39,8 +35,6 @@ export async function GET() {
         missedCalls,
         totalAppointments,
         pendingAppointments,
-        totalComplaints,
-        openComplaints,
         totalSms,
         callbackRequests,
       },

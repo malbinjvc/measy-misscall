@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { createAppointmentSchema } from "@/lib/validations";
+import { timeStringToMinutes } from "@/lib/utils";
 
 export async function POST(
   req: NextRequest,
@@ -17,6 +18,37 @@ export async function POST(
 
     const body = await req.json();
     const validated = createAppointmentSchema.parse(body);
+
+    // Public booking requires phone verification
+    if (!validated.verificationCode) {
+      return NextResponse.json(
+        { success: false, error: "Phone verification is required" },
+        { status: 400 }
+      );
+    }
+
+    // Validate phone verification code
+    const verification = await prisma.phoneVerification.findFirst({
+      where: {
+        phone: validated.customerPhone,
+        code: validated.verificationCode,
+        verified: false,
+        expiresAt: { gte: new Date() },
+      },
+    });
+
+    if (!verification) {
+      return NextResponse.json(
+        { success: false, error: "Invalid or expired verification code. Please verify your phone number." },
+        { status: 400 }
+      );
+    }
+
+    // Mark verification as used
+    await prisma.phoneVerification.update({
+      where: { id: verification.id },
+      data: { verified: true },
+    });
 
     // Verify service belongs to tenant
     const service = await prisma.service.findFirst({
@@ -75,6 +107,46 @@ export async function POST(
     const startMinutes = hours * 60 + minutes;
     const endMinutes = startMinutes + totalDuration;
     const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+    // Validate business hours — parse date directly to avoid timezone issues
+    const [yr, mo, dy] = validated.date.split("-").map(Number);
+    const dateObj = new Date(yr, mo - 1, dy);
+    const daysMap = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+    const dayOfWeek = daysMap[dateObj.getDay()];
+    const businessHours = await prisma.businessHours.findUnique({
+      where: { tenantId_day: { tenantId: tenant.id, day: dayOfWeek as any } },
+    });
+
+    if (!businessHours || !businessHours.isOpen) {
+      return NextResponse.json({ success: false, error: "Business is closed on this day" }, { status: 400 });
+    }
+
+    const openMinutes = timeStringToMinutes(businessHours.openTime);
+    const closeMinutes = timeStringToMinutes(businessHours.closeTime);
+
+    if (startMinutes < openMinutes || endMinutes > closeMinutes) {
+      return NextResponse.json({ success: false, error: "Selected time is outside business hours" }, { status: 400 });
+    }
+
+    // Check for overlapping appointments
+    const appointmentDate = new Date(validated.date + "T00:00:00.000Z");
+    const endOfDay = new Date(validated.date + "T23:59:59.999Z");
+
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        tenantId: tenant.id,
+        date: { gte: appointmentDate, lte: endOfDay },
+        status: { not: "CANCELLED" },
+        AND: [
+          { startTime: { lt: endTime } },
+          { endTime: { gt: validated.startTime } },
+        ],
+      },
+    });
+
+    if (overlapping) {
+      return NextResponse.json({ success: false, error: "This time slot is already booked" }, { status: 409 });
+    }
 
     const appointment = await prisma.appointment.create({
       data: {

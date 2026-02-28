@@ -7,7 +7,6 @@ import {
   PhoneCall,
   PhoneMissed,
   Calendar,
-  MessageSquare,
   Mail,
   PhoneForwarded,
 } from "lucide-react";
@@ -21,6 +20,8 @@ export default function DashboardPage() {
       const json = await res.json();
       return json.data;
     },
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
   });
 
   if (isLoading) {
@@ -35,6 +36,9 @@ export default function DashboardPage() {
       </div>
     );
   }
+
+  const callbackCount = stats?.callbackRequests ?? 0;
+  const hasCallbacks = callbackCount > 0;
 
   const statCards = [
     {
@@ -61,23 +65,29 @@ export default function DashboardPage() {
       icon: Calendar,
       color: "text-yellow-600",
     },
-    {
-      title: "Open Complaints",
-      value: stats?.openComplaints ?? 0,
-      icon: MessageSquare,
-      color: "text-orange-600",
-    },
-    {
-      title: "Callback Requests",
-      value: stats?.callbackRequests ?? 0,
-      icon: PhoneForwarded,
-      color: "text-purple-600",
-    },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-bold tracking-tight mb-6">Dashboard</h1>
+
+      {/* Callback Requests — attention catcher */}
+      {hasCallbacks && (
+        <div className="mb-6 rounded-lg border-2 border-red-500 bg-red-50 p-4 flex items-center gap-4 animate-pulse-slow">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <PhoneForwarded className="h-6 w-6 text-red-600" />
+          </div>
+          <div className="flex-1">
+            <p className="text-lg font-bold text-red-700">
+              {callbackCount} Callback Request{callbackCount !== 1 ? "s" : ""} Pending
+            </p>
+            <p className="text-sm text-red-600">
+              Customers are waiting for a callback. Please follow up as soon as possible.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {statCards.map((stat) => (
           <Card key={stat.title}>

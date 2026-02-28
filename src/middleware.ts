@@ -52,6 +52,7 @@ export default withAuth(
           pathname.startsWith("/api/twilio") ||
           pathname.startsWith("/api/stripe/webhook") ||
           pathname.startsWith("/api/public") ||
+          pathname.startsWith("/uploads/ivr") ||
           pathname.startsWith("/suspended")
         ) {
           return true;

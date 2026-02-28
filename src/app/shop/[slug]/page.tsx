@@ -316,13 +316,6 @@ function MobileMenu({
           >
             Book Appointment
           </Link>
-          <Link
-            href={`/shop/${slug}/complaint`}
-            onClick={onClose}
-            className="block px-6 py-3.5 text-sm font-medium text-muted-foreground hover:bg-gray-50"
-          >
-            Submit Feedback
-          </Link>
         </div>
       </nav>
     </>
@@ -676,25 +669,22 @@ function ServiceCard({ service, slug }: { service: Service; slug: string }) {
         {/* Book button */}
         <div className="mt-3">
           {hasOptions ? (
-            <Link
-              href={bookUrl}
-              onClick={(e) => {
-                if (!selectedOptionId) e.preventDefault();
-              }}
-            >
+            selectedOptionId ? (
+              <Link href={bookUrl}>
+                <Button size="sm" variant="outline" className="w-full text-xs">
+                  Book {selectedOption?.name}
+                </Button>
+              </Link>
+            ) : (
               <Button
                 size="sm"
                 variant="outline"
                 className="w-full text-xs"
-                disabled={!selectedOptionId}
+                onClick={() => setExpanded(!expanded)}
               >
-                {selectedOptionId
-                  ? `Book ${selectedOption?.name}`
-                  : expanded
-                  ? "Select an option to book"
-                  : "View Options & Book"}
+                {expanded ? "Select an option to book" : "View Options & Book"}
               </Button>
-            </Link>
+            )
           ) : (
             <Link href={bookUrl}>
               <Button size="sm" variant="outline" className="w-full text-xs">
@@ -1131,11 +1121,6 @@ function ContactSection({ shop }: { shop: ShopData }) {
         <Link href={`/shop/${shop.slug}/book`} className="flex-1">
           <Button className="w-full" size="lg">
             <Calendar className="mr-2 h-4 w-4" /> Book Appointment
-          </Button>
-        </Link>
-        <Link href={`/shop/${shop.slug}/complaint`} className="flex-1">
-          <Button variant="outline" className="w-full" size="lg">
-            <MessageCircle className="mr-2 h-4 w-4" /> Feedback
           </Button>
         </Link>
       </div>

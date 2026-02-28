@@ -26,7 +26,7 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+  const callbackUrl = searchParams.get("callbackUrl") || "";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +43,25 @@ function LoginForm() {
       if (result?.error) {
         setError(result.error);
       } else {
-        router.push(callbackUrl);
+        // Fetch the new session to determine role-based redirect
+        const sessionRes = await fetch("/api/auth/session");
+        const newSession = await sessionRes.json();
+        const role = newSession?.user?.role;
+
+        let redirectTo = callbackUrl;
+        if (!redirectTo) {
+          // Default redirect based on role
+          redirectTo = role === "SUPER_ADMIN" ? "/admin" : "/dashboard";
+        } else {
+          // Validate callbackUrl matches the user's role
+          if (role === "SUPER_ADMIN" && redirectTo.startsWith("/dashboard")) {
+            redirectTo = "/admin";
+          } else if (role !== "SUPER_ADMIN" && redirectTo.startsWith("/admin")) {
+            redirectTo = "/dashboard";
+          }
+        }
+
+        router.push(redirectTo);
         router.refresh();
       }
     } catch {

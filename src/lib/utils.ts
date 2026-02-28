@@ -5,6 +5,17 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Normalize a phone number to E.164 format (e.g. "+13656543756").
+ * Strips spaces, dashes, parentheses and other formatting characters.
+ */
+export function normalizePhoneNumber(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  // Keep only digits and leading +
+  const normalized = phone.replace(/[^\d+]/g, "");
+  return normalized || null;
+}
+
 export function formatPhoneNumber(phone: string): string {
   const cleaned = phone.replace(/\D/g, "");
   if (cleaned.length === 10) {
@@ -23,13 +34,6 @@ export function generateSlug(name: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-export function generateReferenceNumber(): string {
-  const prefix = "CMP";
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `${prefix}-${timestamp}-${random}`;
-}
-
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -37,12 +41,33 @@ export function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
+const APP_TIMEZONE = "America/Toronto";
+
 export function formatDate(date: Date | string): string {
   return new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: APP_TIMEZONE,
   }).format(new Date(date));
+}
+
+/**
+ * Format a date-only value stored as UTC midnight (e.g. appointment dates).
+ * Shifts to noon UTC before formatting so the Toronto timezone offset
+ * (UTC-5 / UTC-4) doesn't roll the date back to the previous day.
+ */
+export function formatDateUTC(date: Date | string): string {
+  const d = new Date(date);
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
+    d.setUTCHours(12);
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: APP_TIMEZONE,
+  }).format(d);
 }
 
 export function formatDateTime(date: Date | string): string {
@@ -52,6 +77,7 @@ export function formatDateTime(date: Date | string): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: APP_TIMEZONE,
   }).format(new Date(date));
 }
 
@@ -71,11 +97,6 @@ export function getShopUrl(slug: string): string {
 
 export function getBookingUrl(slug: string): string {
   return `${getBaseUrl()}/shop/${slug}/book`;
-}
-
-export function getComplaintUrl(slug: string, callId?: string): string {
-  const base = `${getBaseUrl()}/shop/${slug}/complaint`;
-  return callId ? `${base}?callId=${callId}` : base;
 }
 
 export function timeStringToMinutes(time: string): number {

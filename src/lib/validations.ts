@@ -58,27 +58,11 @@ export const createAppointmentSchema = z.object({
   date: z.string().min(1, "Date is required"),
   startTime: z.string().min(1, "Time is required"),
   notes: z.string().optional(),
+  verificationCode: z.string().length(6, "Verification code must be 6 digits").optional(),
 });
 
 export const updateAppointmentSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
-  notes: z.string().optional(),
-});
-
-// ─── Complaints ──────────────────────────────────────
-
-export const createComplaintSchema = z.object({
-  customerName: z.string().min(2, "Name is required"),
-  customerPhone: z.string().min(10, "Phone number is required"),
-  customerEmail: z.string().email("Invalid email").optional().or(z.literal("")),
-  category: z.enum(["SERVICE_QUALITY", "PRICING", "WAIT_TIME", "STAFF_BEHAVIOR", "OTHER"]),
-  description: z.string().min(10, "Please provide more details (at least 10 characters)"),
-  callId: z.string().optional(),
-});
-
-export const updateComplaintSchema = z.object({
-  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
-  resolution: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -166,7 +150,8 @@ export const platformSettingsSchema = z.object({
   sharedTwilioNumber: z.string().optional(),
   defaultIvrGreeting: z.string().optional(),
   defaultIvrCallback: z.string().optional(),
-  defaultIvrComplaint: z.string().optional(),
+  elevenlabsApiKey: z.string().optional(),
+  elevenlabsVoiceId: z.string().optional(),
   maintenanceMode: z.boolean().optional(),
 });
 
@@ -193,8 +178,6 @@ export type BusinessProfileInput = z.infer<typeof businessProfileSchema>;
 export type ServiceInput = z.infer<typeof serviceSchema>;
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export type UpdateAppointmentInput = z.infer<typeof updateAppointmentSchema>;
-export type CreateComplaintInput = z.infer<typeof createComplaintSchema>;
-export type UpdateComplaintInput = z.infer<typeof updateComplaintSchema>;
 export type ServiceSubOptionInput = z.infer<typeof serviceSubOptionSchema>;
 export type ServiceOptionInput = z.infer<typeof serviceOptionSchema>;
 export type CreateServiceInput = z.infer<typeof createServiceSchema>;

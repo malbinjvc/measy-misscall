@@ -4,8 +4,6 @@ import {
   CallStatus,
   IvrResponse,
   AppointmentStatus,
-  ComplaintStatus,
-  ComplaintCategory,
   SmsStatus,
   SmsType,
   SubscriptionStatus,
@@ -19,8 +17,6 @@ export type {
   CallStatus,
   IvrResponse,
   AppointmentStatus,
-  ComplaintStatus,
-  ComplaintCategory,
   SmsStatus,
   SmsType,
   SubscriptionStatus,
@@ -48,8 +44,6 @@ export interface DashboardStats {
   missedCalls: number;
   totalAppointments: number;
   pendingAppointments: number;
-  totalComplaints: number;
-  openComplaints: number;
   totalSms: number;
   callbackRequests: number;
 }
@@ -102,10 +96,3 @@ export const DEFAULT_SERVICES = [
   { name: "General Inspection", duration: 45, price: 60 },
 ];
 
-export const COMPLAINT_CATEGORIES: { value: ComplaintCategory; label: string }[] = [
-  { value: "SERVICE_QUALITY", label: "Service Quality" },
-  { value: "PRICING", label: "Pricing" },
-  { value: "WAIT_TIME", label: "Wait Time" },
-  { value: "STAFF_BEHAVIOR", label: "Staff Behavior" },
-  { value: "OTHER", label: "Other" },
-];

@@ -1,7 +1,7 @@
 import { SmsType } from "@prisma/client";
 import prisma from "./prisma";
 import { getTwilioClient } from "./twilio";
-import { getBookingUrl, getComplaintUrl } from "./utils";
+import { getShopUrl } from "./utils";
 
 interface SendSmsParams {
   tenantId: string;
@@ -20,7 +20,7 @@ export async function sendSms({
   type,
   callId,
 }: SendSmsParams) {
-  const client = getTwilioClient();
+  const client = await getTwilioClient();
   const fromNumber = from || process.env.TWILIO_PHONE_NUMBER;
 
   if (!fromNumber) {
@@ -70,15 +70,10 @@ export async function sendSms({
 }
 
 export function buildBookingSmsBody(businessName: string, slug: string): string {
-  const url = getBookingUrl(slug);
-  return `Hi! You called ${businessName} and we missed your call. Book an appointment online: ${url}`;
+  const url = getShopUrl(slug);
+  return `Hi from ${businessName}! We're sorry we missed your call. Check out our services and book an appointment here: ${url}`;
 }
 
-export function buildComplaintSmsBody(
-  businessName: string,
-  slug: string,
-  callId?: string
-): string {
-  const url = getComplaintUrl(slug, callId);
-  return `Hi! Thank you for contacting ${businessName}. Submit your feedback here: ${url}`;
+export function buildCallbackSmsBody(businessName: string): string {
+  return `Hi from ${businessName}! We received your callback request. Our team will get back to you shortly. Thank you for your patience!`;
 }

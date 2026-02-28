@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { normalizePhoneNumber } from "@/lib/utils";
+import { generateIvrAudio } from "@/lib/elevenlabs";
 
 const STEP_ORDER = [
   "BUSINESS_PROFILE",
@@ -34,7 +36,7 @@ export async function POST(req: NextRequest) {
             state: data.state || null,
             zipCode: data.zipCode || null,
             description: data.description || null,
-            businessPhoneNumber: data.businessPhoneNumber || null,
+            businessPhoneNumber: normalizePhoneNumber(data.businessPhoneNumber),
             onboardingStep: "SERVICES",
           },
         });
@@ -141,10 +143,25 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        await prisma.tenant.update({
+        const activeTenant = await prisma.tenant.update({
           where: { id: tenantId },
           data: { status: "ACTIVE" },
         });
+
+        // Fire-and-forget: generate IVR audio via ElevenLabs
+        generateIvrAudio(activeTenant.name, tenantId)
+          .then(async (audioUrl) => {
+            if (audioUrl) {
+              await prisma.tenant.update({
+                where: { id: tenantId },
+                data: { ivrAudioUrl: audioUrl },
+              });
+            }
+          })
+          .catch((err) => {
+            console.warn("IVR audio generation failed (non-blocking):", err);
+          });
+
         break;
       }
 

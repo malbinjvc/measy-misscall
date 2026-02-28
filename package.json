@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "PATH=/opt/homebrew/opt/node@20/bin:$PATH next dev",
+    "dev:clean": "rm -rf .next && PATH=/opt/homebrew/opt/node@20/bin:$PATH next dev",
+    "build": "PATH=/opt/homebrew/opt/node@20/bin:$PATH next build",
+    "start": "PATH=/opt/homebrew/opt/node@20/bin:$PATH next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",

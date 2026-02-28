@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const pageSize = parseInt(searchParams.get("pageSize") || "20");
     const status = searchParams.get("status");
 
-    const where: any = { tenantId: session.user.tenantId };
+    const where: any = { tenantId: session.user.tenantId, type: { not: "OTP_VERIFICATION" } };
     if (status) where.status = status;
 
     const [logs, total] = await Promise.all([

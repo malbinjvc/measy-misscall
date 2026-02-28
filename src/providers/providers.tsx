@@ -18,7 +18,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <SessionProvider>
+    <SessionProvider refetchOnWindowFocus={true} refetchInterval={0}>
       <QueryClientProvider client={queryClient}>
         {children}
       </QueryClientProvider>

@@ -68,7 +68,7 @@ export default function HomePage() {
           <FeatureCard
             icon={<MessageSquare className="h-8 w-8 text-primary" />}
             title="Smart IVR & SMS"
-            description="Customers choose callback or complaint via IVR, then receive an SMS with a booking or complaint link."
+            description="Customers choose callback via IVR, then receive an SMS with a booking link."
           />
           <FeatureCard
             icon={<Calendar className="h-8 w-8 text-primary" />}
@@ -78,7 +78,7 @@ export default function HomePage() {
           <FeatureCard
             icon={<Shield className="h-8 w-8 text-primary" />}
             title="Full Dashboard"
-            description="Track all calls, appointments, complaints, and SMS logs from a single dashboard."
+            description="Track all calls, appointments, and SMS logs from a single dashboard."
           />
         </div>
       </section>

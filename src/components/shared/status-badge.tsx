@@ -13,11 +13,6 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "ou
   COMPLETED: "success",
   CANCELLED: "destructive",
   NO_SHOW: "destructive",
-  // Complaint statuses
-  OPEN: "warning",
-  IN_PROGRESS: "default",
-  RESOLVED: "success",
-  CLOSED: "secondary",
   // SMS statuses
   QUEUED: "secondary",
   SENT: "default",
@@ -35,7 +30,8 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "ou
   UNPAID: "destructive",
   INCOMPLETE: "warning",
   // IVR responses
-  CALLBACK: "default",
+  CALLBACK: "destructive",
+  BOOKING_LINK: "default",
   COMPLAINT: "warning",
   NO_RESPONSE: "secondary",
   INVALID: "destructive",

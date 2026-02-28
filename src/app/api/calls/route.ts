@@ -44,3 +44,37 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Failed to fetch calls" }, { status: 500 });
   }
 }
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.tenantId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { callId, callbackHandled } = await req.json();
+
+    if (!callId || typeof callbackHandled !== "boolean") {
+      return NextResponse.json({ success: false, error: "Invalid request" }, { status: 400 });
+    }
+
+    // Verify call belongs to tenant
+    const call = await prisma.call.findFirst({
+      where: { id: callId, tenantId: session.user.tenantId },
+    });
+
+    if (!call) {
+      return NextResponse.json({ success: false, error: "Call not found" }, { status: 404 });
+    }
+
+    const updated = await prisma.call.update({
+      where: { id: callId },
+      data: { callbackHandled },
+    });
+
+    return NextResponse.json({ success: true, data: updated });
+  } catch (error) {
+    console.error("Call update error:", error);
+    return NextResponse.json({ success: false, error: "Failed to update call" }, { status: 500 });
+  }
+}

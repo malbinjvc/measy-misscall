@@ -1,24 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { buildIvrResponse, buildErrorResponse } from "@/lib/twiml";
+import { normalizePhoneNumber } from "@/lib/utils";
+import { getSharedAudioUrl } from "@/lib/elevenlabs";
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const to = formData.get("To") as string;
+    const to = normalizePhoneNumber(formData.get("To") as string);
     const from = formData.get("From") as string;
     const callSid = formData.get("CallSid") as string;
 
-    // Find tenant by assigned Twilio number
-    const tenant = await prisma.tenant.findFirst({
-      where: {
-        assignedTwilioNumber: to,
-        status: "ACTIVE",
-      },
-    });
+    // Find tenant by assigned Twilio number (normalized E.164)
+    const tenant = to
+      ? await prisma.tenant.findFirst({
+          where: {
+            assignedTwilioNumber: to,
+            status: "ACTIVE",
+          },
+        })
+      : null;
 
     if (!tenant) {
-      return new NextResponse(buildErrorResponse(), {
+      console.error(`No active tenant found for Twilio number: ${to} (raw: ${formData.get("To")})`);
+      return new NextResponse(buildErrorResponse(getSharedAudioUrl("error")), {
         headers: { "Content-Type": "text/xml" },
       });
     }
@@ -37,9 +42,9 @@ export async function POST(req: NextRequest) {
     const gatherUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/gather?callId=${call.id}`;
     const twiml = buildIvrResponse(
       gatherUrl,
-      tenant.ivrGreeting || "Thank you for calling. We missed your call.",
-      tenant.ivrCallbackMessage || "Press 1 if you would like us to call you back.",
-      tenant.ivrComplaintMessage || "Press 2 to submit a complaint or feedback."
+      tenant.name,
+      tenant.ivrAudioUrl,
+      getSharedAudioUrl("noinput")
     );
 
     return new NextResponse(twiml, {
@@ -47,7 +52,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Twilio voice error:", error);
-    return new NextResponse(buildErrorResponse(), {
+    return new NextResponse(buildErrorResponse(getSharedAudioUrl("error")), {
       headers: { "Content-Type": "text/xml" },
     });
   }
