@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/twilio-cleanup",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}

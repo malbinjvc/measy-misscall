@@ -83,7 +83,8 @@ enum DayOfWeek {
 
 enum OnboardingStep {
   BUSINESS_PROFILE
-  SERVICES
+  INDUSTRY
+  PHONE_SETUP
   SUBSCRIPTION
   REVIEW
 }
@@ -118,9 +119,10 @@ model Tenant {
   city                String?
   state               String?
   zipCode             String?
-  country             String?        @default("US")
+  country             String?        @default("CA")
   logoUrl             String?
   description         String?
+  industry            String?
   website             String?
   status              TenantStatus   @default(ONBOARDING)
   onboardingStep      OnboardingStep @default(BUSINESS_PROFILE)
@@ -385,4 +387,38 @@ model PhoneVerification {
   createdAt DateTime @default(now())
 
   @@index([phone, code])
+}
+
+model TwilioCleanupQueue {
+  id           String   @id @default(cuid())
+  phoneNumber  String
+  tenantId     String?
+  tenantName   String?
+  reason       String              // "tenant_deletion", "status_change_to_SUSPENDED", etc.
+  attempts     Int      @default(0)
+  maxAttempts  Int      @default(3)
+  lastError    String?
+  status       String   @default("PENDING")  // PENDING, COMPLETED, ABANDONED
+  nextRetryAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, nextRetryAt])
+}
+
+model AdminLog {
+  id         String   @id @default(cuid())
+  action     String                        // e.g. "TENANT_DELETED", "TWILIO_NUMBER_RELEASED"
+  details    String?                       // Human-readable description
+  tenantId   String?                       // Which tenant was affected (nullable for non-tenant actions)
+  tenantName String?                       // Store name at time of action (tenant may be deleted)
+  userId     String?                       // Admin who performed the action
+  userName   String?                       // Store name at time of action
+  status     String   @default("SUCCESS")  // "SUCCESS" or "FAILED"
+  metadata   Json?                         // Extra data (phone numbers, error messages, etc.)
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([action])
+  @@index([createdAt])
 }
