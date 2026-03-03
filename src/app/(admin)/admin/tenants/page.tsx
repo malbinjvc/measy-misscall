@@ -20,7 +20,7 @@ interface TenantRow {
   assignedTwilioNumber: string | null;
   status: string;
   createdAt: string;
-  subscription?: { plan?: { name: string } } | null;
+  subscription?: { plan?: { name: string }; status?: string; cancelAtPeriodEnd?: boolean } | null;
   _count?: { calls: number };
 }
 
@@ -104,7 +104,7 @@ export default function AdminTenantsPage() {
                   <TableHead>Business Phone</TableHead>
                   <TableHead>Assigned Twilio #</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Plan</TableHead>
+                  <TableHead>Plan / Subscription</TableHead>
                   <TableHead>Calls</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Actions</TableHead>
@@ -177,7 +177,18 @@ function TenantRow({ tenant, updateMutation, deleteMutation }: { tenant: TenantR
         )}
       </TableCell>
       <TableCell><StatusBadge status={tenant.status} /></TableCell>
-      <TableCell className="text-sm">{tenant.subscription?.plan?.name || "None"}</TableCell>
+      <TableCell className="text-sm">
+        <div className="flex items-center gap-1.5">
+          <span>{tenant.subscription?.plan?.name || "None"}</span>
+          {tenant.subscription ? (
+            tenant.subscription.cancelAtPeriodEnd && tenant.subscription.status !== "CANCELED" ? (
+              <StatusBadge status="CANCELING" />
+            ) : tenant.subscription.status && tenant.subscription.status !== "ACTIVE" ? (
+              <StatusBadge status={tenant.subscription.status} />
+            ) : null
+          ) : null}
+        </div>
+      </TableCell>
       <TableCell className="text-sm">{tenant._count?.calls || 0}</TableCell>
       <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
       <TableCell>

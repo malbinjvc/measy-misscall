@@ -27,6 +27,7 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "ou
   TRIALING: "warning",
   PAST_DUE: "destructive",
   CANCELED: "destructive",
+  CANCELING: "warning",
   UNPAID: "destructive",
   INCOMPLETE: "warning",
   // IVR responses

@@ -3,6 +3,7 @@ import { stripe, upsertSubscriptionFromStripe, STRIPE_STATUS_MAP } from "@/lib/s
 import prisma from "@/lib/prisma";
 import Stripe from "stripe";
 import { getErrorMessage } from "@/lib/errors";
+import { logAdminAction } from "@/lib/admin-log";
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -88,15 +89,48 @@ export async function POST(req: NextRequest) {
               : undefined,
           },
         });
+
+        // Log when a tenant schedules cancellation
+        if (sub.cancel_at_period_end === true) {
+          const cancelingTenant = await prisma.subscription.findFirst({
+            where: { stripeSubscriptionId: sub.id as string },
+            select: { tenantId: true, tenant: { select: { name: true } } },
+          });
+          if (cancelingTenant) {
+            await logAdminAction({
+              action: "SUBSCRIPTION_CANCELING",
+              details: `Tenant "${cancelingTenant.tenant.name}" scheduled subscription cancellation at period end`,
+              tenantId: cancelingTenant.tenantId,
+              tenantName: cancelingTenant.tenant.name,
+              metadata: { stripeSubscriptionId: sub.id as string },
+            });
+          }
+        }
         break;
       }
 
       case "customer.subscription.deleted": {
         const deletedSub = event.data.object as unknown as Record<string, unknown>;
+
+        const canceledTenant = await prisma.subscription.findFirst({
+          where: { stripeSubscriptionId: deletedSub.id as string },
+          select: { tenantId: true, tenant: { select: { name: true } } },
+        });
+
         await prisma.subscription.updateMany({
           where: { stripeSubscriptionId: deletedSub.id as string },
           data: { status: "CANCELED" },
         });
+
+        if (canceledTenant) {
+          await logAdminAction({
+            action: "SUBSCRIPTION_CANCELED",
+            details: `Tenant "${canceledTenant.tenant.name}" subscription was canceled`,
+            tenantId: canceledTenant.tenantId,
+            tenantName: canceledTenant.tenant.name,
+            metadata: { stripeSubscriptionId: deletedSub.id as string },
+          });
+        }
         break;
       }
     }
