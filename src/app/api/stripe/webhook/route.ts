@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
+import { stripe, upsertSubscriptionFromStripe, STRIPE_STATUS_MAP } from "@/lib/stripe";
 import prisma from "@/lib/prisma";
 import Stripe from "stripe";
+import { getErrorMessage } from "@/lib/errors";
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -19,8 +20,8 @@ export async function POST(req: NextRequest) {
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
-  } catch (err: any) {
-    console.error("Webhook signature verification failed:", err.message);
+  } catch (err: unknown) {
+    console.error("Webhook signature verification failed:", getErrorMessage(err));
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
@@ -32,49 +33,19 @@ export async function POST(req: NextRequest) {
         const subscriptionId = session.subscription as string;
 
         if (tenantId && subscriptionId) {
-          const subscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
-          const priceId = subscription.items?.data?.[0]?.price?.id;
+          await upsertSubscriptionFromStripe(tenantId, subscriptionId);
 
-          // Find matching plan
-          const plan = priceId
-            ? await prisma.plan.findFirst({ where: { stripePriceId: priceId } })
-            : null;
-
-          if (plan) {
-            const periodStart = subscription.current_period_start
-              ? new Date(subscription.current_period_start * 1000)
-              : new Date();
-            const periodEnd = subscription.current_period_end
-              ? new Date(subscription.current_period_end * 1000)
-              : new Date();
-
-            await prisma.subscription.upsert({
-              where: { tenantId },
-              update: {
-                stripeSubscriptionId: subscriptionId,
-                stripePriceId: priceId,
-                planId: plan.id,
-                status: "ACTIVE",
-                currentPeriodStart: periodStart,
-                currentPeriodEnd: periodEnd,
-              },
-              create: {
-                tenantId,
-                planId: plan.id,
-                stripeSubscriptionId: subscriptionId,
-                stripePriceId: priceId,
-                status: "ACTIVE",
-                currentPeriodStart: periodStart,
-                currentPeriodEnd: periodEnd,
-              },
-            });
-          }
+          // Advance onboarding step if tenant is still on SUBSCRIPTION
+          await prisma.tenant.updateMany({
+            where: { id: tenantId, onboardingStep: "SUBSCRIPTION" },
+            data: { onboardingStep: "REVIEW" },
+          });
         }
         break;
       }
 
       case "invoice.paid": {
-        const paidInvoice = event.data.object as any;
+        const paidInvoice = event.data.object as unknown as Record<string, unknown>;
         const paidSubId = paidInvoice.subscription as string;
         if (paidSubId) {
           await prisma.subscription.updateMany({
@@ -86,7 +57,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "invoice.payment_failed": {
-        const failedInvoice = event.data.object as any;
+        const failedInvoice = event.data.object as unknown as Record<string, unknown>;
         const failedSubId = failedInvoice.subscription as string;
         if (failedSubId) {
           await prisma.subscription.updateMany({
@@ -98,26 +69,22 @@ export async function POST(req: NextRequest) {
       }
 
       case "customer.subscription.updated": {
-        const sub = event.data.object as any;
-        const statusMap: Record<string, string> = {
-          active: "ACTIVE",
-          past_due: "PAST_DUE",
-          canceled: "CANCELED",
-          unpaid: "UNPAID",
-          trialing: "TRIALING",
-          incomplete: "INCOMPLETE",
-        };
+        const sub = event.data.object as unknown as Record<string, unknown>;
+        const subStatus = sub.status as string;
+        const mappedStatus = STRIPE_STATUS_MAP[subStatus] || "ACTIVE";
+        const periodStart = sub.current_period_start as number | undefined;
+        const periodEnd = sub.current_period_end as number | undefined;
 
         await prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: sub.id },
+          where: { stripeSubscriptionId: sub.id as string },
           data: {
-            status: (statusMap[sub.status] || "ACTIVE") as any,
-            cancelAtPeriodEnd: sub.cancel_at_period_end ?? false,
-            currentPeriodStart: sub.current_period_start
-              ? new Date(sub.current_period_start * 1000)
+            status: mappedStatus,
+            cancelAtPeriodEnd: (sub.cancel_at_period_end as boolean) ?? false,
+            currentPeriodStart: periodStart
+              ? new Date(periodStart * 1000)
               : undefined,
-            currentPeriodEnd: sub.current_period_end
-              ? new Date(sub.current_period_end * 1000)
+            currentPeriodEnd: periodEnd
+              ? new Date(periodEnd * 1000)
               : undefined,
           },
         });
@@ -125,9 +92,9 @@ export async function POST(req: NextRequest) {
       }
 
       case "customer.subscription.deleted": {
-        const deletedSub = event.data.object as any;
+        const deletedSub = event.data.object as unknown as Record<string, unknown>;
         await prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: deletedSub.id },
+          where: { stripeSubscriptionId: deletedSub.id as string },
           data: { status: "CANCELED" },
         });
         break;
@@ -135,7 +102,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ received: true });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Webhook handler error:", error);
     return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { createServiceSchema, updateServiceSchema } from "@/lib/validations";
+import { createServiceSchema, updateServiceSchema, deleteByIdSchema } from "@/lib/validations";
 
 export async function GET() {
   try {
@@ -86,9 +86,9 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, data: service });
-  } catch (error: any) {
-    if (error.name === "ZodError") {
-      return NextResponse.json({ success: false, error: "Validation failed", details: error.errors }, { status: 400 });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "ZodError") {
+      return NextResponse.json({ success: false, error: "Validation failed" }, { status: 400 });
     }
     return NextResponse.json({ success: false, error: "Failed to create" }, { status: 500 });
   }
@@ -116,41 +116,43 @@ export async function PATCH(req: NextRequest) {
 
     // If options are provided, delete existing (cascade deletes sub-options) and recreate
     if (options !== undefined) {
-      await prisma.serviceSubOption.deleteMany({
-        where: { serviceOption: { serviceId: id } },
-      });
-      await prisma.serviceOption.deleteMany({ where: { serviceId: id } });
-      if (options && options.length > 0) {
-        for (let idx = 0; idx < options.length; idx++) {
-          const opt = options[idx];
-          await prisma.serviceOption.create({
-            data: {
-              name: opt.name!,
-              description: opt.description,
-              duration: opt.duration ?? null,
-              price: opt.price ?? null,
-              isActive: opt.isActive ?? true,
-              sortOrder: idx,
-              defaultQuantity: opt.defaultQuantity ?? 1,
-              minQuantity: opt.minQuantity ?? 1,
-              maxQuantity: opt.maxQuantity ?? 10,
-              serviceId: id,
-              ...(opt.subOptions?.length
-                ? {
-                    subOptions: {
-                      create: opt.subOptions.map((sub: any, subIdx: number) => ({
-                        name: sub.name,
-                        description: sub.description,
-                        price: sub.price ?? null,
-                        sortOrder: subIdx,
-                      })),
-                    },
-                  }
-                : {}),
-            },
-          });
+      await prisma.$transaction(async (tx) => {
+        await tx.serviceSubOption.deleteMany({
+          where: { serviceOption: { serviceId: id } },
+        });
+        await tx.serviceOption.deleteMany({ where: { serviceId: id } });
+        if (options && options.length > 0) {
+          for (let idx = 0; idx < options.length; idx++) {
+            const opt = options[idx];
+            await tx.serviceOption.create({
+              data: {
+                name: opt.name!,
+                description: opt.description,
+                duration: opt.duration ?? null,
+                price: opt.price ?? null,
+                isActive: opt.isActive ?? true,
+                sortOrder: idx,
+                defaultQuantity: opt.defaultQuantity ?? 1,
+                minQuantity: opt.minQuantity ?? 1,
+                maxQuantity: opt.maxQuantity ?? 10,
+                serviceId: id,
+                ...(opt.subOptions?.length
+                  ? {
+                      subOptions: {
+                        create: opt.subOptions.map((sub, subIdx) => ({
+                          name: sub.name,
+                          description: sub.description,
+                          price: sub.price ?? null,
+                          sortOrder: subIdx,
+                        })),
+                      },
+                    }
+                  : {}),
+              },
+            });
+          }
         }
-      }
+      });
     }
 
     const updated = await prisma.service.update({
@@ -176,16 +178,20 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const { id } = await req.json();
+    const { id } = deleteByIdSchema.parse(await req.json());
+    const tenantId = session.user.tenantId;
 
-    const service = await prisma.service.findFirst({
-      where: { id, tenantId: session.user.tenantId },
+    const deleted = await prisma.$transaction(async (tx) => {
+      const service = await tx.service.findFirst({
+        where: { id, tenantId },
+      });
+      if (!service) return null;
+      await tx.service.delete({ where: { id } });
+      return true;
     });
-    if (!service) {
+    if (!deleted) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
-
-    await prisma.service.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ success: false, error: "Delete failed" }, { status: 500 });

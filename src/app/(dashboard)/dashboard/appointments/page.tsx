@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, UseMutationResult, QueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -72,6 +72,7 @@ interface Appointment {
     id: string;
     name: string;
     price: number | null;
+    duration?: number | null;
     subOptions: SubOption[];
   } | null;
   totalPrice: number;
@@ -84,6 +85,29 @@ interface BusinessHour {
   openTime: string;
   closeTime: string;
 }
+
+interface AppointmentListResponse {
+  data: Appointment[];
+  page: number;
+  totalPages: number;
+  total: number;
+  stats?: {
+    totalAppointments: number;
+    totalRevenue: number;
+    statusCounts?: Record<string, number>;
+  };
+}
+
+interface CalendarResponse {
+  data: Record<string, Appointment[]>;
+  businessHours?: BusinessHour[];
+}
+
+type AppointmentUpdateMutation = UseMutationResult<
+  unknown,
+  Error,
+  { id: string; status?: string; notes?: string; date?: string; startTime?: string }
+>;
 
 // ─── Constants ────────────────────────────────────────
 
@@ -167,14 +191,16 @@ export default function AppointmentsPage() {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
       const res = await fetch(`/api/appointments?${params}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
 
-  const { data: calendarData } = useQuery({
+  const { data: calendarData } = useQuery<CalendarResponse>({
     queryKey: ["appointments-calendar", calendarMonth],
     queryFn: async () => {
       const res = await fetch(`/api/appointments?mode=calendar&month=${calendarMonth}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     enabled: activeView === "calendar",
@@ -187,6 +213,7 @@ export default function AppointmentsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => {
@@ -380,13 +407,13 @@ export default function AppointmentsPage() {
 function ListView({
   data, isLoading, page, setPage, onSelect, updateMutation, queryClient,
 }: {
-  data: any;
+  data: AppointmentListResponse | undefined;
   isLoading: boolean;
   page: number;
   setPage: (p: number) => void;
   onSelect: (a: Appointment) => void;
-  updateMutation: any;
-  queryClient: any;
+  updateMutation: AppointmentUpdateMutation;
+  queryClient: QueryClient;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState("");
@@ -422,6 +449,7 @@ function ListView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: Array.from(selectedIds), status: bulkStatus }),
       });
+      if (!res.ok) throw new Error("Request failed");
       const result = await res.json();
       if (result.success) {
         setSelectedIds(new Set());
@@ -587,7 +615,7 @@ function CalendarView({
 }: {
   calendarMonth: string;
   setCalendarMonth: (m: string) => void;
-  calendarData: any;
+  calendarData: CalendarResponse | undefined;
   onAddAppointment: (date: string) => void;
 }) {
   const [year, month] = calendarMonth.split("-").map(Number);
@@ -885,11 +913,12 @@ function RescheduleDialog({
 
   // Fetch business hours + appointments for the selected date's month
   const dateMonth = date ? date.substring(0, 7) : null;
-  const { data: bhData } = useQuery({
+  const { data: bhData } = useQuery<CalendarResponse>({
     queryKey: ["business-hours-for-reschedule", dateMonth],
     queryFn: async () => {
       const m = dateMonth || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
       const res = await fetch(`/api/appointments?mode=calendar&month=${m}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
@@ -904,7 +933,7 @@ function RescheduleDialog({
     if (!date || !bhData?.businessHours) return [];
     const dayOfWeek = new Date(date + "T12:00:00").getDay();
     const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-    const bh = bhData.businessHours.find((h: any) => h.day === dayNames[dayOfWeek]);
+    const bh = bhData.businessHours.find((h: BusinessHour) => h.day === dayNames[dayOfWeek]);
     if (!bh || !bh.isOpen) return [];
     return generateTimeSlots(bh.openTime, bh.closeTime, 30);
   }, [date, bhData?.businessHours]);
@@ -925,8 +954,8 @@ function RescheduleDialog({
   }, [appointmentsForDate, appointment.id]);
 
   // Service duration for overlap checking
-  const serviceDuration = appointment.serviceOption
-    ? ((appointment.serviceOption as any).duration || appointment.service.duration)
+  const serviceDuration = appointment.serviceOption?.duration
+    ? appointment.serviceOption.duration
     : appointment.service.duration;
   const totalDuration = serviceDuration * (appointment.quantity || 1);
   const slotsNeeded = Math.ceil(totalDuration / 30);
@@ -941,6 +970,7 @@ function RescheduleDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: appointment.id, date, startTime }),
       });
+      if (!res.ok) throw new Error("Request failed");
       const result = await res.json();
       if (!result.success) {
         setError(result.error || "Failed to reschedule");
@@ -1108,21 +1138,23 @@ function CreateAppointmentDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Fetch services
-  const { data: servicesData } = useQuery({
+  const { data: servicesData } = useQuery<{ data: Service[] }>({
     queryKey: ["services"],
     queryFn: async () => {
       const res = await fetch("/api/services");
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
 
   // Fetch business hours + appointments for the selected date's month
   const dateMonth = date ? date.substring(0, 7) : null;
-  const { data: bhData } = useQuery({
+  const { data: bhData } = useQuery<CalendarResponse>({
     queryKey: ["business-hours-for-create", dateMonth],
     queryFn: async () => {
       const m = dateMonth || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
       const res = await fetch(`/api/appointments?mode=calendar&month=${m}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
@@ -1158,7 +1190,7 @@ function CreateAppointmentDialog({
     if (!date || !bhData?.businessHours) return [];
     const dayOfWeek = new Date(date + "T12:00:00").getDay();
     const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-    const bh = bhData.businessHours.find((h: any) => h.day === dayNames[dayOfWeek]);
+    const bh = bhData.businessHours.find((h: BusinessHour) => h.day === dayNames[dayOfWeek]);
     if (!bh || !bh.isOpen) return [];
     return generateTimeSlots(bh.openTime, bh.closeTime, 30);
   }, [date, bhData?.businessHours]);
@@ -1182,7 +1214,7 @@ function CreateAppointmentDialog({
     if (!appointmentsForDate.length || !date || !bhData?.businessHours) return [];
     const dayOfWeek = new Date(date + "T12:00:00").getDay();
     const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-    const bh = bhData.businessHours.find((h: any) => h.day === dayNames[dayOfWeek]);
+    const bh = bhData.businessHours.find((h: BusinessHour) => h.day === dayNames[dayOfWeek]);
     if (!bh || !bh.isOpen) return [];
     const openMin = timeStringToMinutes(bh.openTime);
     const closeMin = timeStringToMinutes(bh.closeTime);
@@ -1228,6 +1260,7 @@ function CreateAppointmentDialog({
           notes: notesField || undefined,
         }),
       });
+      if (!res.ok) throw new Error("Request failed");
       const result = await res.json();
       if (!result.success) {
         if (result.fieldErrors) {

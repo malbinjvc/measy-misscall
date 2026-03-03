@@ -10,7 +10,10 @@ export const loginSchema = z.object({
 export const registerSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain uppercase, lowercase, and a number"),
   businessName: z.string().min(2, "Business name must be at least 2 characters"),
   phone: z.string().optional(),
 });
@@ -39,10 +42,6 @@ export const serviceSchema = z.object({
   duration: z.number().min(15, "Minimum 15 minutes").max(480, "Maximum 8 hours"),
   price: z.number().min(0).optional(),
   isActive: z.boolean().default(true),
-});
-
-export const servicesStepSchema = z.object({
-  services: z.array(serviceSchema).min(1, "Add at least one service"),
 });
 
 // ─── Appointments ────────────────────────────────────
@@ -108,6 +107,11 @@ export const updateServiceSchema = createServiceSchema.partial();
 
 // ─── Business Hours ──────────────────────────────────
 
+const timeStringSchema = z.string().regex(
+  /^([01]\d|2[0-3]):[0-5]\d$/,
+  "Time must be in HH:MM format (00:00–23:59)"
+);
+
 export const businessHoursSchema = z.object({
   hours: z.array(
     z.object({
@@ -121,8 +125,8 @@ export const businessHoursSchema = z.object({
         "SUNDAY",
       ]),
       isOpen: z.boolean(),
-      openTime: z.string(),
-      closeTime: z.string(),
+      openTime: timeStringSchema,
+      closeTime: timeStringSchema,
     })
   ),
 });
@@ -170,6 +174,59 @@ export const reviewSchema = z.object({
 
 export const phoneVerificationSchema = z.object({
   phone: z.string().min(10, "Phone number is required"),
+});
+
+// ─── Inline validation schemas (for routes without dedicated schemas) ────
+
+export const deleteByIdSchema = z.object({
+  id: z.string().min(1, "ID is required"),
+});
+
+export const deleteTenantSchema = z.object({
+  tenantId: z.string().min(1, "Tenant ID is required"),
+});
+
+export const testTwilioSchema = z.object({
+  sid: z.string().min(1, "Account SID is required"),
+  token: z.string().min(1, "Auth Token is required"),
+});
+
+export const updateTenantAdminSchema = z.object({
+  id: z.string().min(1, "Tenant ID is required"),
+  status: z.enum(["ONBOARDING", "ACTIVE", "SUSPENDED", "DISABLED"]).optional(),
+  assignedTwilioNumber: z.string().optional().nullable(),
+});
+
+export const updateCallSchema = z.object({
+  callId: z.string().min(1, "Call ID is required"),
+  callbackHandled: z.boolean(),
+});
+
+export const onboardingStepSchema = z.object({
+  step: z.string().min(1, "Step is required"),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: z.any().optional().default({}),
+});
+
+export const sendOtpSchema = z.object({
+  phone: z.string().min(10, "Phone number is required"),
+});
+
+export const verifyOtpSchema = z.object({
+  phone: z.string().min(10, "Phone number is required"),
+  code: z.string().length(6, "Code must be 6 digits"),
+});
+
+export const chatMessageSchema = z.object({
+  message: z.string().min(1, "Message is required").max(500, "Message too long"),
+});
+
+export const checkoutSchema = z.object({
+  planId: z.string().min(1, "Plan ID is required"),
+});
+
+export const purchaseNumberSchema = z.object({
+  phoneNumber: z.string().min(10, "Phone number is required"),
 });
 
 // ─── Type exports ────────────────────────────────────

@@ -12,6 +12,18 @@ import { Button } from "@/components/ui/button";
 import { Mail, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDateTime, formatPhoneNumber } from "@/lib/utils";
 
+interface SmsLog {
+  id: string;
+  to: string;
+  toNumber: string;
+  body: string;
+  status: string;
+  createdAt: string;
+  direction: string;
+  from: string;
+  type: string;
+}
+
 export default function SmsLogsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
@@ -22,6 +34,7 @@ export default function SmsLogsPage() {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
       const res = await fetch(`/api/sms?${params}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
@@ -58,7 +71,7 @@ export default function SmsLogsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.data.map((sms: any) => (
+                {data.data.map((sms: SmsLog) => (
                   <TableRow key={sms.id}>
                     <TableCell className="text-sm">{formatDateTime(sms.createdAt)}</TableCell>
                     <TableCell className="text-sm">{formatPhoneNumber(sms.toNumber)}</TableCell>

@@ -3,9 +3,17 @@ import prisma from "@/lib/prisma";
 import { buildIvrResponse, buildErrorResponse } from "@/lib/twiml";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { getSharedAudioUrl } from "@/lib/elevenlabs";
+import { verifyTwilioWebhook } from "@/lib/twilio";
 
 export async function POST(req: NextRequest) {
   try {
+    // Validate Twilio webhook signature
+    const isValid = await verifyTwilioWebhook(req);
+    if (!isValid) {
+      console.warn("Invalid Twilio signature on /api/twilio/voice");
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
     const formData = await req.formData();
     const to = normalizePhoneNumber(formData.get("To") as string);
     const from = formData.get("From") as string;

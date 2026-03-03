@@ -3,9 +3,25 @@ import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { registerSchema } from "@/lib/validations";
 import { generateSlug } from "@/lib/utils";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { verifyCsrf } from "@/lib/csrf";
+import { ZodError } from "zod";
 
 export async function POST(req: NextRequest) {
   try {
+    const csrfError = verifyCsrf(req);
+    if (csrfError) return csrfError;
+
+    // Rate limit: 5 registrations per IP per hour
+    const ip = getClientIp(req);
+    const limit = checkRateLimit(`register:${ip}`, { max: 5, windowSec: 3600 });
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many registration attempts. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const validated = registerSchema.parse(body);
 
@@ -66,10 +82,10 @@ export async function POST(req: NextRequest) {
         slug: result.tenant.slug,
       },
     });
-  } catch (error: any) {
-    if (error.name === "ZodError") {
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
       return NextResponse.json(
-        { success: false, error: "Validation failed", details: error.errors },
+        { success: false, error: "Validation failed", details: error.issues },
         { status: 400 }
       );
     }

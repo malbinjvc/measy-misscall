@@ -1,12 +1,21 @@
+import { Decimal } from "@prisma/client/runtime/library";
+
+type DecimalLike = number | Decimal | null | undefined;
+
+function toNumber(value: DecimalLike): number {
+  if (value === null || value === undefined) return 0;
+  return typeof value === "number" ? value : Number(value);
+}
+
 export function computeAppointmentPrice(
   appointment: { quantity: number; selectedSubOptions: string[] },
-  service: { price: number | null },
+  service: { price: DecimalLike },
   serviceOption: {
-    price: number | null;
-    subOptions: { id: string; price: number | null }[];
+    price: DecimalLike;
+    subOptions: { id: string; price: DecimalLike }[];
   } | null
 ): number {
-  const basePrice = serviceOption?.price ?? service.price ?? 0;
+  const basePrice = toNumber(serviceOption?.price) || toNumber(service.price);
   const lineTotal = basePrice * appointment.quantity;
 
   let subTotal = 0;
@@ -14,7 +23,7 @@ export function computeAppointmentPrice(
     for (const subId of appointment.selectedSubOptions) {
       const sub = serviceOption.subOptions.find((s) => s.id === subId);
       if (sub?.price) {
-        subTotal += sub.price;
+        subTotal += toNumber(sub.price);
       }
     }
   }

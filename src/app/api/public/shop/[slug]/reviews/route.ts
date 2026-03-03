@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { reviewSchema } from "@/lib/validations";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { hashOtp } from "@/lib/crypto";
+import { verifyCsrf } from "@/lib/csrf";
 
 export async function GET(
   req: NextRequest,
@@ -68,6 +71,13 @@ export async function POST(
   { params }: { params: { slug: string } }
 ) {
   try {
+    const csrfError = verifyCsrf(req);
+    if (csrfError) return csrfError;
+
+    const ip = getClientIp(req);
+    const limit = checkRateLimit(`reviews:${ip}`, { max: 5, windowSec: 600 });
+    if (!limit.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+
     const tenant = await prisma.tenant.findUnique({
       where: { slug: params.slug },
       select: { id: true, status: true },
@@ -89,28 +99,26 @@ export async function POST(
 
     const { customerName, customerPhone, rating, comment, imageUrl, verificationCode } = parsed.data;
 
-    // Validate phone verification code
-    const verification = await prisma.phoneVerification.findFirst({
+    // Hash the incoming verification code to compare against stored hash
+    const hashedVerificationCode = hashOtp(verificationCode);
+
+    // Atomically claim the verification code to prevent race conditions
+    const claimed = await prisma.phoneVerification.updateMany({
       where: {
         phone: customerPhone,
-        code: verificationCode,
+        code: hashedVerificationCode,
         verified: false,
         expiresAt: { gte: new Date() },
       },
+      data: { verified: true },
     });
 
-    if (!verification) {
+    if (claimed.count === 0) {
       return NextResponse.json(
         { success: false, error: "Invalid or expired verification code" },
         { status: 400 }
       );
     }
-
-    // Mark verification as used
-    await prisma.phoneVerification.update({
-      where: { id: verification.id },
-      data: { verified: true },
-    });
 
     // Create the review
     const review = await prisma.review.create({

@@ -2,8 +2,13 @@ import twilio from "twilio";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
+interface TwimlNode {
+  play(url: string): void;
+  say(attributes: Record<string, string>, message: string): void;
+}
+
 function playOrSay(
-  node: any,
+  node: TwimlNode,
   message: string,
   audioUrl?: string | null
 ) {

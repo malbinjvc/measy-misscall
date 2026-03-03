@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { createStripeCustomer, createCheckoutSession } from "@/lib/stripe";
+import { checkoutSchema } from "@/lib/validations";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,15 +12,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const { planId } = await req.json();
+    const { planId } = checkoutSchema.parse(await req.json());
     const tenantId = session.user.tenantId;
 
-    const plan = await prisma.plan.findUnique({ where: { id: planId } });
+    // Atomic read of plan + tenant, then conditional Stripe customer creation
+    const { plan, tenant } = await prisma.$transaction(async (tx) => {
+      const plan = await tx.plan.findUnique({ where: { id: planId } });
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+      return { plan, tenant };
+    });
+
     if (!plan || !plan.stripePriceId) {
       return NextResponse.json({ success: false, error: "Invalid plan" }, { status: 400 });
     }
 
-    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) {
       return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
     }
@@ -43,7 +49,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, data: { url: checkoutSession.url } });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Checkout error:", error);
     return NextResponse.json({ success: false, error: "Failed to create checkout" }, { status: 500 });
   }

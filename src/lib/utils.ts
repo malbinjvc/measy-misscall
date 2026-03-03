@@ -126,3 +126,22 @@ export function generateTimeSlots(
 
   return slots;
 }
+
+const MAX_PAGE_SIZE = 100;
+
+/**
+ * Sanitize pagination params from query string.
+ * Clamps page >= 1 and pageSize between 1 and MAX_PAGE_SIZE.
+ */
+export function sanitizePagination(
+  pageParam: string | null,
+  pageSizeParam: string | null,
+  defaultPageSize = 20
+): { page: number; pageSize: number; skip: number } {
+  const page = Math.max(1, parseInt(pageParam || "1", 10) || 1);
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, parseInt(pageSizeParam || String(defaultPageSize), 10) || defaultPageSize)
+  );
+  return { page, pageSize, skip: (page - 1) * pageSize };
+}

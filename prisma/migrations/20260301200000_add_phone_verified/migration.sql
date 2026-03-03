@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Tenant" ADD COLUMN "phoneVerified" BOOLEAN NOT NULL DEFAULT false;

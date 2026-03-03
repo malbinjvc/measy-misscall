@@ -26,7 +26,7 @@ export async function GET() {
       }),
     ]);
 
-    const totalRevenue = subscriptions.reduce((sum, sub) => sum + (sub.plan?.price || 0), 0);
+    const totalRevenue = subscriptions.reduce((sum, sub) => sum + Number(sub.plan?.price || 0), 0);
 
     return NextResponse.json({
       success: true,

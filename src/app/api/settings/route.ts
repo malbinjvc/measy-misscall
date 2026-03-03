@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { DayOfWeek } from "@prisma/client";
 import { normalizePhoneNumber } from "@/lib/utils";
+import { businessProfileSchema, businessHoursSchema } from "@/lib/validations";
+import { ZodError } from "zod";
+
+interface BusinessHoursInput {
+  day: DayOfWeek;
+  isOpen: boolean;
+  openTime: string;
+  closeTime: string;
+}
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -17,25 +27,56 @@ export async function PATCH(req: NextRequest) {
 
     switch (section) {
       case "profile": {
-        await prisma.tenant.update({
-          where: { id: tenantId },
-          data: {
-            name: data.name,
-            slug: data.slug,
-            email: data.email,
-            phone: data.phone || null,
-            address: data.address || null,
-            city: data.city || null,
-            state: data.state || null,
-            zipCode: data.zipCode || null,
-            description: data.description || null,
-          },
+        // Validate profile fields with Zod (partial — only validate provided fields)
+        const profileData = businessProfileSchema
+          .omit({ businessPhoneNumber: true })
+          .partial()
+          .parse(data);
+
+        // Atomically check slug uniqueness and update in a transaction
+        const profileResult = await prisma.$transaction(async (tx) => {
+          if (profileData.slug) {
+            const currentTenant = await tx.tenant.findUnique({
+              where: { id: tenantId },
+              select: { slug: true },
+            });
+            if (profileData.slug !== currentTenant?.slug) {
+              const existingSlug = await tx.tenant.findFirst({
+                where: { slug: profileData.slug, id: { not: tenantId } },
+              });
+              if (existingSlug) {
+                return { slugTaken: true } as const;
+              }
+            }
+          }
+
+          await tx.tenant.update({
+            where: { id: tenantId },
+            data: {
+              name: profileData.name,
+              slug: profileData.slug,
+              email: profileData.email,
+              phone: profileData.phone || null,
+              address: profileData.address || null,
+              city: profileData.city || null,
+              state: profileData.state || null,
+              zipCode: profileData.zipCode || null,
+              description: profileData.description || null,
+            },
+          });
+          return { slugTaken: false } as const;
         });
+        if (profileResult.slugTaken) {
+          return NextResponse.json({ success: false, error: "Slug already taken" }, { status: 400 });
+        }
         break;
       }
 
       case "hours": {
-        for (const h of data.hours) {
+        // Validate hours with Zod
+        const hoursData = businessHoursSchema.parse(data);
+
+        for (const h of hoursData.hours) {
           await prisma.businessHours.upsert({
             where: { tenantId_day: { tenantId, day: h.day } },
             update: { isOpen: h.isOpen, openTime: h.openTime, closeTime: h.closeTime },
@@ -56,11 +97,11 @@ export async function PATCH(req: NextRequest) {
         });
 
         const DAY_NAMES_UPPER = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-        const hoursMap = new Map(data.hours.map((h: any) => [h.day, h]));
+        const hoursMap = new Map<string, BusinessHoursInput>(hoursData.hours.map((h: BusinessHoursInput) => [h.day, h]));
         let affectedCount = 0;
         for (const apt of futureAppointments) {
           const dayName = DAY_NAMES_UPPER[new Date(apt.date).getUTCDay()];
-          const bh = hoursMap.get(dayName) as any;
+          const bh = hoursMap.get(dayName);
           if (!bh || !bh.isOpen) { affectedCount++; continue; }
           const [oh, om] = bh.openTime.split(":").map(Number);
           const [ch, cm] = bh.closeTime.split(":").map(Number);
@@ -119,7 +160,20 @@ export async function PATCH(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const field = issue.path?.[0];
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
+        }
+      }
+      return NextResponse.json(
+        { success: false, error: "Validation failed", fieldErrors },
+        { status: 400 }
+      );
+    }
     console.error("Settings update error:", error);
     return NextResponse.json({ success: false, error: "Failed to save settings" }, { status: 500 });
   }

@@ -115,6 +115,7 @@ model Tenant {
   slug                String         @unique
   email               String
   phone               String?
+  phoneVerified       Boolean        @default(false)
   address             String?
   city                String?
   state               String?
@@ -162,7 +163,7 @@ model Service {
   name          String
   description   String?
   duration      Int             @default(60) // in minutes
-  price         Float?
+  price         Decimal?    @db.Decimal(10, 2)
   isActive      Boolean         @default(true)
   sortOrder     Int             @default(0)
   tenantId      String
@@ -180,7 +181,7 @@ model ServiceOption {
   name            String
   description     String?
   duration        Int?               // Override parent service duration (optional)
-  price           Float?             // Override parent service price (optional)
+  price           Decimal?           @db.Decimal(10, 2) // Override parent service price (optional)
   isActive        Boolean            @default(true)
   sortOrder       Int                @default(0)
   defaultQuantity Int                @default(1)
@@ -200,7 +201,7 @@ model ServiceSubOption {
   id              String        @id @default(cuid())
   name            String
   description     String?
-  price           Float?
+  price           Decimal?      @db.Decimal(10, 2)
   isActive        Boolean       @default(true)
   sortOrder       Int           @default(0)
   serviceOptionId String
@@ -305,7 +306,7 @@ model Plan {
   id                String         @id @default(cuid())
   name              String
   description       String?
-  price             Float
+  price             Decimal     @default(0) @db.Decimal(10, 2)
   interval          String         @default("month") // "month" or "year"
   stripePriceId     String?        @unique
   maxCalls          Int            @default(100)

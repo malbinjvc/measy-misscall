@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { createPlanSchema } from "@/lib/validations";
+import { createPlanSchema, deleteByIdSchema } from "@/lib/validations";
+import { ZodError } from "zod";
 
 export async function GET() {
   try {
@@ -38,9 +39,19 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, data: plan });
-  } catch (error: any) {
-    if (error.name === "ZodError") {
-      return NextResponse.json({ success: false, error: "Validation failed" }, { status: 400 });
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const field = issue.path?.[0];
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
+        }
+      }
+      return NextResponse.json(
+        { success: false, error: "Validation failed", fieldErrors },
+        { status: 400 }
+      );
     }
     return NextResponse.json({ success: false, error: "Failed to create" }, { status: 500 });
   }
@@ -56,9 +67,28 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const { id, ...data } = body;
 
-    const plan = await prisma.plan.update({ where: { id }, data });
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Plan ID is required" }, { status: 400 });
+    }
+
+    const validated = createPlanSchema.partial().parse(data);
+
+    const plan = await prisma.plan.update({ where: { id }, data: validated });
     return NextResponse.json({ success: true, data: plan });
   } catch (error) {
+    if (error instanceof ZodError) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const field = issue.path?.[0];
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
+        }
+      }
+      return NextResponse.json(
+        { success: false, error: "Validation failed", fieldErrors },
+        { status: 400 }
+      );
+    }
     return NextResponse.json({ success: false, error: "Update failed" }, { status: 500 });
   }
 }
@@ -70,7 +100,19 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { id } = await req.json();
+    const { id } = deleteByIdSchema.parse(await req.json());
+
+    // Check for active subscriptions before deleting
+    const activeSubs = await prisma.subscription.count({
+      where: { planId: id, status: { not: "CANCELED" } },
+    });
+    if (activeSubs > 0) {
+      return NextResponse.json(
+        { success: false, error: "Cannot delete plan with active subscriptions" },
+        { status: 400 }
+      );
+    }
+
     await prisma.plan.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {

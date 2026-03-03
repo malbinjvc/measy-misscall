@@ -57,29 +57,7 @@ cp .env.example .env
 
 ### Configure Environment
 
-Edit `.env` with your values:
-
-```env
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/measy_misscall"
-
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="your-secret-key"
-
-# Twilio (optional)
-TWILIO_ACCOUNT_SID="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-TWILIO_AUTH_TOKEN="your-auth-token"
-TWILIO_PHONE_NUMBER="+1234567890"
-
-# Stripe (optional)
-STRIPE_SECRET_KEY="sk_test_xxx"
-STRIPE_PUBLISHABLE_KEY="pk_test_xxx"
-STRIPE_WEBHOOK_SECRET="whsec_xxx"
-
-# App
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
-```
+Edit `.env` with your values — see `.env.example` for all required and optional variables.
 
 ### Database Setup
 
@@ -101,10 +79,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Demo Accounts
 
-| Role | Email | Password |
-|------|-------|----------|
-| Super Admin | admin@measy.com | admin123 |
-| Tenant Owner | joe@example.com | owner123 |
+After seeding (`npm run db:seed`), demo accounts are created. See the seed script for credentials.
 
 ## Project Structure
 

@@ -48,7 +48,7 @@ export const authOptions: NextAuthOptions = {
   ],
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 7 * 24 * 60 * 60, // 7 days
   },
   callbacks: {
     async jwt({ token, user }) {
@@ -61,12 +61,17 @@ export const authOptions: NextAuthOptions = {
 
       // Refresh tenant status on each request
       if (token.tenantId) {
-        const tenant = await prisma.tenant.findUnique({
-          where: { id: token.tenantId },
-          select: { status: true },
-        });
-        if (tenant) {
-          token.tenantStatus = tenant.status;
+        try {
+          const tenant = await prisma.tenant.findUnique({
+            where: { id: token.tenantId },
+            select: { status: true },
+          });
+          if (tenant) {
+            token.tenantStatus = tenant.status;
+          }
+        } catch (error) {
+          console.error("Failed to refresh tenant status in JWT callback:", error);
+          // Return token as-is without tenant status refresh so auth isn't broken
         }
       }
 

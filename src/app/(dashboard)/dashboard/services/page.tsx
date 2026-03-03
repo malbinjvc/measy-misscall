@@ -30,13 +30,52 @@ interface ServiceOptionForm {
   subOptions: ServiceSubOptionForm[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface ServiceForm {
+  id?: string;
+  name: string;
+  description: string;
+  duration: number;
+  price: number;
+  isActive: boolean;
+  sortOrder?: number;
+  options?: Record<string, unknown>[];
+}
+
+interface ServiceRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  duration: number;
+  price: number | null;
+  isActive: boolean;
+  sortOrder: number;
+  options?: ServiceOptionRecord[];
+}
+
+interface ServiceOptionRecord {
+  name: string;
+  description: string | null;
+  price: number | null;
+  defaultQuantity: number | null;
+  minQuantity: number | null;
+  maxQuantity: number | null;
+  subOptions?: ServiceSubOptionRecord[];
+}
+
+interface ServiceSubOptionRecord {
+  name: string;
+  description: string | null;
+  price: number | null;
+}
+
 const emptySubOption: ServiceSubOptionForm = { name: "", description: "", price: "" };
 const emptyOption: ServiceOptionForm = { name: "", description: "", price: "", defaultQuantity: "1", minQuantity: "1", maxQuantity: "10", subOptions: [] };
 
 export default function ServicesPage() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingService, setEditingService] = useState<any>(null);
+  const [editingService, setEditingService] = useState<ServiceRecord | null>(null);
   const [form, setForm] = useState({ name: "", description: "", duration: 60, price: 0, isActive: true });
   const [options, setOptions] = useState<ServiceOptionForm[]>([]);
 
@@ -44,29 +83,32 @@ export default function ServicesPage() {
     queryKey: ["services"],
     queryFn: async () => {
       const res = await fetch("/api/services");
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: ServiceForm) => {
       const res = await fetch("/api/services", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["services"] }); closeDialog(); },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Partial<ServiceForm> & { id: string; isActive?: boolean }) => {
       const res = await fetch("/api/services", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["services"] }); closeDialog(); },
@@ -79,6 +121,7 @@ export default function ServicesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["services"] }),
@@ -91,7 +134,7 @@ export default function ServicesPage() {
     setIsDialogOpen(true);
   }
 
-  function openEdit(service: any) {
+  function openEdit(service: ServiceRecord) {
     setEditingService(service);
     setForm({
       name: service.name,
@@ -101,14 +144,14 @@ export default function ServicesPage() {
       isActive: service.isActive,
     });
     setOptions(
-      (service.options || []).map((opt: any) => ({
+      (service.options || []).map((opt: ServiceOptionRecord) => ({
         name: opt.name,
         description: opt.description || "",
         price: opt.price?.toString() || "",
         defaultQuantity: opt.defaultQuantity?.toString() || "1",
         minQuantity: opt.minQuantity?.toString() || "1",
         maxQuantity: opt.maxQuantity?.toString() || "10",
-        subOptions: (opt.subOptions || []).map((sub: any) => ({
+        subOptions: (opt.subOptions || []).map((sub: ServiceSubOptionRecord) => ({
           name: sub.name,
           description: sub.description || "",
           price: sub.price?.toString() || "",
@@ -231,14 +274,14 @@ export default function ServicesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.data.map((service: any) => (
+              {data.data.map((service: ServiceRecord) => (
                 <TableRow key={service.id}>
                   <TableCell className="font-medium">{service.name}</TableCell>
                   <TableCell className="text-sm">{service.duration} min</TableCell>
                   <TableCell className="text-sm">{service.price ? formatCurrency(service.price) : "\u2014"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {service.options?.length > 0
-                      ? `${service.options.length} option${service.options.length > 1 ? "s" : ""}`
+                    {(service.options?.length ?? 0) > 0
+                      ? `${service.options!.length} option${service.options!.length > 1 ? "s" : ""}`
                       : "\u2014"}
                   </TableCell>
                   <TableCell>
@@ -252,7 +295,7 @@ export default function ServicesPage() {
                       <Button variant="ghost" size="icon" onClick={() => openEdit(service)}>
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(service.id)}>
+                      <Button variant="ghost" size="icon" onClick={() => { if (!window.confirm("Are you sure you want to delete this service?")) return; deleteMutation.mutate(service.id); }}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>

@@ -52,7 +52,7 @@ function getSessionKey(slug: string, key: string) {
   return `booking_${slug}_${key}`;
 }
 
-function saveToSession(slug: string, key: string, value: any) {
+function saveToSession(slug: string, key: string, value: unknown) {
   try {
     sessionStorage.setItem(getSessionKey(slug, key), JSON.stringify(value));
   } catch {}
@@ -69,7 +69,11 @@ function loadFromSession<T>(slug: string, key: string, fallback: T): T {
 export default function BookingPage({ params }: { params: { slug: string } }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [shop, setShop] = useState<any>(null);
+  interface ShopData {
+    name: string;
+    services: ServiceWithOptions[];
+  }
+  const [shop, setShop] = useState<ShopData | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -166,8 +170,8 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
           setShop(data.data);
           // Clamp quantity if restoring from session with an option
           if (preServiceId && preOptionId && preQuantity > 0) {
-            const svc = data.data.services?.find((s: any) => s.id === preServiceId);
-            const opt = svc?.options?.find((o: any) => o.id === preOptionId);
+            const svc = data.data.services?.find((s: ServiceWithOptions) => s.id === preServiceId);
+            const opt = svc?.options?.find((o: ServiceOption) => o.id === preOptionId);
             if (opt) {
               setQuantity(Math.min(Math.max(preQuantity, opt.minQuantity), opt.maxQuantity));
             }
@@ -208,7 +212,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
 
   // Get selected service
   const selectedService: ServiceWithOptions | null = shop?.services?.find(
-    (s: any) => s.id === form.serviceId
+    (s: ServiceWithOptions) => s.id === form.serviceId
   ) || null;
 
   const serviceOptions = selectedService?.options || [];
@@ -266,11 +270,30 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     }
   }
 
-  function handleVerifyCode() {
+  const [verifying, setVerifying] = useState(false);
+
+  async function handleVerifyCode() {
     if (verificationCode.length !== 6) return;
-    setPhoneVerified(true);
-    setVerifiedPhone(form.customerPhone);
+    setVerifying(true);
     setVerifyError("");
+    try {
+      const res = await fetch(`/api/public/shop/${params.slug}/verify-phone`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: form.customerPhone, code: verificationCode }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPhoneVerified(true);
+        setVerifiedPhone(form.customerPhone);
+      } else {
+        setVerifyError(data.error || "Invalid or expired code");
+      }
+    } catch {
+      setVerifyError("Verification failed. Please try again.");
+    } finally {
+      setVerifying(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -279,7 +302,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     setSubmitting(true);
 
     try {
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         serviceId: form.serviceId,
         customerName: form.customerName,
         customerPhone: form.customerPhone,
@@ -383,7 +406,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                   required
                 >
                   <option value="">Select a service</option>
-                  {shop?.services?.map((s: any) => (
+                  {shop?.services?.map((s: ServiceWithOptions) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.duration} min{s.price ? ` - $${s.price}` : ""})
                     </option>
@@ -584,9 +607,9 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                       <Button
                         type="button"
                         onClick={handleVerifyCode}
-                        disabled={verificationCode.length !== 6}
+                        disabled={verificationCode.length !== 6 || verifying}
                       >
-                        Confirm
+                        {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm"}
                       </Button>
                     </div>
                     <button

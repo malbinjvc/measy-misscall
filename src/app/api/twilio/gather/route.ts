@@ -4,9 +4,17 @@ import { buildThankYouResponse, buildErrorResponse } from "@/lib/twiml";
 import { sendSms, buildBookingSmsBody, buildCallbackSmsBody } from "@/lib/sms";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { getSharedAudioUrl } from "@/lib/elevenlabs";
+import { verifyTwilioWebhook } from "@/lib/twilio";
 
 export async function POST(req: NextRequest) {
   try {
+    // Validate Twilio webhook signature
+    const isValid = await verifyTwilioWebhook(req);
+    if (!isValid) {
+      console.warn("Invalid Twilio signature on /api/twilio/gather");
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
     const formData = await req.formData();
     const digits = formData.get("Digits") as string;
     const callId = req.nextUrl.searchParams.get("callId");

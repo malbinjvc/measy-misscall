@@ -2,7 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { platformSettingsSchema, testTwilioSchema } from "@/lib/validations";
 import { testTwilioConnection, clearTwilioCache } from "@/lib/twilio";
+import { getErrorMessage } from "@/lib/errors";
+import { encrypt, decrypt, isEncrypted } from "@/lib/crypto";
+
+const sensitiveFields = ["sharedTwilioToken", "stripeSecretKey", "stripeWebhookSecret", "elevenlabsApiKey"] as const;
+
+/** Mask a secret string, showing only last 4 characters */
+function maskSecret(value: string | null): string | null {
+  if (!value || value.length <= 4) return value ? "****" : null;
+  return "****" + value.slice(-4);
+}
+
+/** Decrypt sensitive fields in a settings object */
+function decryptSettings<T extends Record<string, unknown>>(settings: T): T {
+  const decrypted: Record<string, unknown> = { ...settings };
+  for (const field of sensitiveFields) {
+    const val = decrypted[field];
+    if (val && typeof val === "string" && isEncrypted(val)) {
+      try {
+        decrypted[field] = decrypt(val);
+      } catch {
+        /* leave as-is if decryption fails */
+      }
+    }
+  }
+  return decrypted as T;
+}
 
 export async function GET() {
   try {
@@ -21,8 +48,18 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json({ success: true, data: settings });
-  } catch (error) {
+    // Decrypt sensitive fields, then mask before sending to client
+    const decrypted = decryptSettings(settings);
+    const masked = {
+      ...decrypted,
+      sharedTwilioToken: maskSecret(decrypted.sharedTwilioToken),
+      stripeSecretKey: maskSecret(decrypted.stripeSecretKey),
+      stripeWebhookSecret: maskSecret(decrypted.stripeWebhookSecret),
+      elevenlabsApiKey: maskSecret(decrypted.elevenlabsApiKey),
+    };
+
+    return NextResponse.json({ success: true, data: masked });
+  } catch (error: unknown) {
     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
   }
 }
@@ -35,32 +72,38 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
+    const validated = platformSettingsSchema.partial().parse(body);
 
-    // Only allow known fields — strip id, createdAt, updatedAt, etc.
-    const allowedFields: Record<string, any> = {};
-    const allowed = [
-      "sharedTwilioSid", "sharedTwilioToken", "sharedTwilioNumber",
-      "defaultIvrGreeting", "defaultIvrCallback",
-      "stripeSecretKey", "stripePublishableKey", "stripeWebhookSecret",
-      "elevenlabsApiKey", "elevenlabsVoiceId",
-      "maintenanceMode",
-    ];
-    for (const key of allowed) {
-      if (key in body) allowedFields[key] = body[key];
+    // Encrypt sensitive fields before saving to DB
+    for (const field of sensitiveFields) {
+      const val = (validated as Record<string, unknown>)[field];
+      if (val && typeof val === "string" && !isEncrypted(val)) {
+        (validated as Record<string, string>)[field] = encrypt(val);
+      }
     }
 
     const settings = await prisma.platformSettings.upsert({
       where: { id: "platform-settings" },
-      update: allowedFields,
-      create: { id: "platform-settings", ...allowedFields },
+      update: validated,
+      create: { id: "platform-settings", ...validated },
     });
 
     // Clear cached Twilio client so new credentials take effect
     clearTwilioCache();
 
-    return NextResponse.json({ success: true, data: settings });
-  } catch (error) {
-    console.error("Admin settings PATCH error:", error);
+    // Decrypt then mask secrets in the response
+    const decrypted = decryptSettings(settings);
+    const masked = {
+      ...decrypted,
+      sharedTwilioToken: maskSecret(decrypted.sharedTwilioToken),
+      stripeSecretKey: maskSecret(decrypted.stripeSecretKey),
+      stripeWebhookSecret: maskSecret(decrypted.stripeWebhookSecret),
+      elevenlabsApiKey: maskSecret(decrypted.elevenlabsApiKey),
+    };
+
+    return NextResponse.json({ success: true, data: masked });
+  } catch (error: unknown) {
+    console.error("Admin settings PATCH error:", getErrorMessage(error));
     return NextResponse.json({ success: false, error: "Update failed" }, { status: 500 });
   }
 }
@@ -73,19 +116,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { sid, token } = await req.json();
-
-    if (!sid || !token) {
-      return NextResponse.json(
-        { success: false, error: "Account SID and Auth Token are required." },
-        { status: 400 }
-      );
-    }
+    const { sid, token } = testTwilioSchema.parse(await req.json());
 
     const result = await testTwilioConnection(sid, token);
 
     return NextResponse.json(result);
-  } catch (error) {
+  } catch (error: unknown) {
     return NextResponse.json({ success: false, error: "Connection test failed" }, { status: 500 });
   }
 }

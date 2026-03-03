@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
+import type { TenantData } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,13 +22,14 @@ export default function SettingsPage() {
     queryKey: ["tenant"],
     queryFn: async () => {
       const res = await fetch("/api/tenant");
+      if (!res.ok) throw new Error("Request failed");
       const json = await res.json();
       return json.data;
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -72,7 +74,9 @@ export default function SettingsPage() {
   );
 }
 
-function ProfileSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
+type SettingsMutation = UseMutationResult<unknown, Error, Record<string, unknown>>;
+
+function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
   const [form, setForm] = useState({
     name: tenant?.name || "",
     slug: tenant?.slug || "",
@@ -143,12 +147,12 @@ function ProfileSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
   );
 }
 
-function BusinessHoursSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
+function BusinessHoursSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
   const queryClient = useQueryClient();
   const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
   const [hours, setHours] = useState(
     days.map((day) => {
-      const existing = tenant?.businessHours?.find((h: any) => h.day === day);
+      const existing = tenant?.businessHours?.find((h: { day: string; isOpen: boolean; openTime: string; closeTime: string }) => h.day === day);
       return {
         day,
         isOpen: existing?.isOpen ?? (day !== "SUNDAY"),
@@ -159,7 +163,7 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: any; mutation: an
   );
   const [affectedWarning, setAffectedWarning] = useState<number | null>(null);
 
-  function updateDay(index: number, field: string, value: any) {
+  function updateDay(index: number, field: string, value: string | boolean) {
     const updated = [...hours];
     updated[index] = { ...updated[index], [field]: value };
     setHours(updated);
@@ -171,12 +175,13 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: any; mutation: an
     mutation.mutate(
       { section: "hours", hours },
       {
-        onSuccess: (result: any) => {
+        onSuccess: (result: unknown) => {
           // Invalidate cached business hours so appointments page picks up changes
           queryClient.invalidateQueries({ queryKey: ["appointments-calendar"] });
           queryClient.invalidateQueries({ queryKey: ["business-hours-for-create"] });
-          if (result?.affectedAppointments > 0) {
-            setAffectedWarning(result.affectedAppointments);
+          const data = result as { affectedAppointments?: number } | undefined;
+          if (data?.affectedAppointments && data.affectedAppointments > 0) {
+            setAffectedWarning(data.affectedAppointments);
           }
         },
       }
@@ -225,7 +230,7 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: any; mutation: an
   );
 }
 
-function PhoneSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
+function PhoneSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     businessPhoneNumber: tenant?.businessPhoneNumber || "",
@@ -366,7 +371,7 @@ function PhoneSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
             mutation.mutate(
               { section: "twilio", ...form },
               {
-                onError: (err: any) => setSaveError(err.message || "Failed to save phone settings."),
+                onError: (err: Error) => setSaveError(err.message || "Failed to save phone settings."),
               }
             );
           }}
@@ -380,7 +385,7 @@ function PhoneSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
   );
 }
 
-function MediaSettings({ tenant, mutation }: { tenant: any; mutation: any }) {
+function MediaSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
   const [form, setForm] = useState({
     heroMediaUrl: tenant?.heroMediaUrl || "",
     heroMediaType: tenant?.heroMediaType || "image",

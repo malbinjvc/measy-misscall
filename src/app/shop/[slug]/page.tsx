@@ -846,8 +846,25 @@ function WriteReviewModal({
       setError("Please enter the 6-digit code");
       return;
     }
-    setStep("review");
     setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/public/shop/${slug}/verify-phone`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStep("review");
+      } else {
+        setError(data.error || "Invalid or expired code");
+      }
+    } catch {
+      setError("Verification failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const submitReview = async () => {
@@ -968,7 +985,7 @@ function WriteReviewModal({
               <Label>Rating</Label>
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <button key={i} onClick={() => setRating(i)} className="p-1">
+                  <button key={i} onClick={() => setRating(i)} aria-label={`Rate ${i} out of 5 stars`} className="p-1">
                     <Star
                       className={`h-8 w-8 transition-colors ${
                         i <= rating
@@ -1192,6 +1209,7 @@ function AiChatWidget({
       {/* FAB */}
       <button
         onClick={onToggle}
+        aria-label={open ? "Close chat" : "Open chat"}
         className={`fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg flex items-center justify-center transition-all ${
           open
             ? "bg-gray-700 hover:bg-gray-800"

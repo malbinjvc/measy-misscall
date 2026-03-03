@@ -1,24 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
+import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
 import { LoadingPage } from "@/components/shared/loading";
-import { ONBOARDING_STEPS, DEFAULT_SERVICES } from "@/types";
-import { Check, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { ONBOARDING_STEPS, INDUSTRIES, TenantData, PlanData, AvailableNumber } from "@/types";
+import {
+  Check,
+  ChevronRight,
+  ChevronLeft,
+  Loader2,
+  ShieldCheck,
+  AlertCircle,
+  CheckCircle2,
+  Phone,
+} from "lucide-react";
+
+interface OnboardingMutationData {
+  step: string;
+  data: Record<string, unknown>;
+}
+
+interface OnboardingMutationResult {
+  success: boolean;
+  data?: { checkoutUrl?: string };
+}
+
+type OnboardingMutation = UseMutationResult<OnboardingMutationResult, Error, OnboardingMutationData>;
+type GoBackMutation = UseMutationResult<unknown, Error, void>;
 
 export default function OnboardingPage() {
   const { data: session } = useSession();
-  const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
-  const { data: tenant, isLoading } = useQuery({
+  const { data: tenant, isLoading } = useQuery<TenantData>({
     queryKey: ["tenant"],
     queryFn: async () => {
       const res = await fetch("/api/tenant");
@@ -31,16 +54,39 @@ export default function OnboardingPage() {
     (s) => s.step === (tenant?.onboardingStep || "BUSINESS_PROFILE")
   );
 
-  const mutation = useMutation({
-    mutationFn: async (data: { step: string; data: any }) => {
+  const mutation: OnboardingMutation = useMutation({
+    mutationFn: async (data: OnboardingMutationData) => {
       const res = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
+      const json = await res.json();
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to save");
+        throw new Error(json.error || "Failed to save");
+      }
+      return json;
+    },
+    onSuccess: (result) => {
+      // Handle Stripe redirect
+      if (result.data?.checkoutUrl) {
+        window.location.href = result.data.checkoutUrl;
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: ["tenant"] });
+    },
+  });
+
+  const goBackMutation: GoBackMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "GO_BACK", data: {} }),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || "Failed to go back");
       }
       return res.json();
     },
@@ -49,24 +95,56 @@ export default function OnboardingPage() {
     },
   });
 
+  // Handle Stripe return — verify payment and advance step
+  const sessionId = searchParams.get("session_id");
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const confirmSubscription = async () => {
+      try {
+        const res = await fetch("/api/onboarding", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: "CONFIRM_SUBSCRIPTION",
+            data: { sessionId },
+          }),
+        });
+        if (!res.ok) {
+          const json = await res.json();
+          console.error("Subscription confirmation failed:", json.error);
+        }
+      } catch (err) {
+        console.error("Subscription confirmation error:", err);
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ["tenant"] });
+      }
+    };
+    confirmSubscription();
+  }, [sessionId, queryClient]);
+
   if (isLoading) return <LoadingPage />;
 
   return (
     <div className="max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold tracking-tight mb-2">Set Up Your Business</h1>
-      <p className="text-muted-foreground mb-8">Complete these steps to start receiving automated missed call handling.</p>
+      <p className="text-muted-foreground mb-8">
+        Complete these steps to start receiving automated missed call handling.
+      </p>
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8 overflow-x-auto pb-2">
         {ONBOARDING_STEPS.map((step, index) => (
           <div key={step.step} className="flex items-center">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${
-              index < currentStepIndex
-                ? "bg-green-100 text-green-700"
-                : index === currentStepIndex
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
-            }`}>
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                index < currentStepIndex
+                  ? "bg-green-100 text-green-700"
+                  : index === currentStepIndex
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
               {index < currentStepIndex ? (
                 <Check className="h-3 w-3" />
               ) : (
@@ -85,20 +163,25 @@ export default function OnboardingPage() {
       {tenant?.onboardingStep === "BUSINESS_PROFILE" && (
         <BusinessProfileStep tenant={tenant} mutation={mutation} />
       )}
-      {tenant?.onboardingStep === "SERVICES" && (
-        <ServicesStep tenant={tenant} mutation={mutation} />
+      {tenant?.onboardingStep === "INDUSTRY" && (
+        <IndustryStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
+      )}
+      {tenant?.onboardingStep === "PHONE_SETUP" && (
+        <PhoneSetupStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
       )}
       {tenant?.onboardingStep === "SUBSCRIPTION" && (
-        <SubscriptionStep tenant={tenant} mutation={mutation} />
+        <SubscriptionStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
       )}
       {tenant?.onboardingStep === "REVIEW" && (
-        <ReviewStep tenant={tenant} mutation={mutation} router={router} />
+        <ReviewStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
       )}
     </div>
   );
 }
 
-function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any }) {
+// ─── Business Profile Step (with inline phone verification) ───────
+
+function BusinessProfileStep({ tenant, mutation }: { tenant: TenantData; mutation: OnboardingMutation }) {
   const [form, setForm] = useState({
     name: tenant?.name || "",
     slug: tenant?.slug || "",
@@ -108,9 +191,66 @@ function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any 
     city: tenant?.city || "",
     state: tenant?.state || "",
     zipCode: tenant?.zipCode || "",
-    description: tenant?.description || "",
     businessPhoneNumber: tenant?.businessPhoneNumber || "",
   });
+
+  // Phone verification state
+  const [verified, setVerified] = useState(!!tenant?.phoneVerified);
+  const [verifiedPhone, setVerifiedPhone] = useState(tenant?.phoneVerified ? (tenant?.phone || "") : "");
+  const [codeSent, setCodeSent] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
+
+  // Detect phone change → reset verification
+  useEffect(() => {
+    if (verified && form.phone !== verifiedPhone) {
+      setVerified(false);
+      setCodeSent(false);
+      setOtp("");
+      setVerifyError("");
+    }
+  }, [form.phone, verified, verifiedPhone]);
+
+  const handleSendCode = async () => {
+    setSending(true);
+    setVerifyError("");
+    try {
+      const res = await fetch("/api/onboarding/verify-phone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: form.phone }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to send code");
+      setCodeSent(true);
+    } catch (err: unknown) {
+      setVerifyError(err instanceof Error ? err.message : "Failed to send code");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    setVerifying(true);
+    setVerifyError("");
+    try {
+      const res = await fetch("/api/onboarding/verify-phone", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: form.phone, code: otp }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Verification failed");
+      setVerified(true);
+      setVerifiedPhone(form.phone);
+    } catch (err: unknown) {
+      setVerifyError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   return (
     <Card>
@@ -121,162 +261,411 @@ function BusinessProfileStep({ tenant, mutation }: { tenant: any; mutation: any 
       <CardContent className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Business Name</Label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Label htmlFor="business-name">Business Name *</Label>
+            <Input id="business-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
           <div className="space-y-2">
-            <Label>URL Slug</Label>
-            <Input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+            <Label htmlFor="business-slug">URL Slug</Label>
+            <Input id="business-slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
             <p className="text-xs text-muted-foreground">Your page: /shop/{form.slug}</p>
           </div>
         </div>
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Email</Label>
-            <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <Label htmlFor="business-email">Email *</Label>
+            <Input
+              id="business-email"
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+            />
           </div>
           <div className="space-y-2">
-            <Label>Phone</Label>
-            <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <Label htmlFor="business-phone">Phone *</Label>
+            <div className="flex gap-2">
+              <Input
+                id="business-phone"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="+14376673153"
+                className="flex-1"
+              />
+              {!verified && !codeSent && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSendCode}
+                  disabled={sending || !form.phone || form.phone.length < 10}
+                  className="shrink-0"
+                >
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4 mr-1" />}
+                  Send Code
+                </Button>
+              )}
+              {verified && (
+                <div className="flex items-center text-green-600 shrink-0 px-2">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+              )}
+            </div>
+
+            {/* OTP input */}
+            {codeSent && !verified && (
+              <div className="flex gap-2 mt-2">
+                <Input
+                  id="phone-verification-code"
+                  placeholder="6-digit code"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  maxLength={6}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleVerifyCode}
+                  disabled={verifying || otp.length !== 6}
+                  className="shrink-0"
+                >
+                  {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSendCode}
+                  disabled={sending}
+                  className="shrink-0"
+                >
+                  Resend
+                </Button>
+              </div>
+            )}
+
+            {verifyError && (
+              <p className="text-xs text-destructive flex items-center gap-1 mt-1">
+                <AlertCircle className="h-3 w-3" /> {verifyError}
+              </p>
+            )}
+
+            {verified && (
+              <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
+                <CheckCircle2 className="h-3 w-3" /> Phone verified
+              </p>
+            )}
           </div>
         </div>
         <div className="space-y-2">
-          <Label>Business Phone Number</Label>
+          <Label htmlFor="business-phone-number">Business Phone Number *</Label>
           <Input
+            id="business-phone-number"
             placeholder="+15551234567"
             value={form.businessPhoneNumber}
             onChange={(e) => setForm({ ...form, businessPhoneNumber: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            This is your main business phone number that customers call. You will set up call forwarding from this number to your assigned Twilio number after onboarding.
+            This is your main business phone number that customers call. You will set up call
+            forwarding from this number to your assigned Twilio number after onboarding.
           </p>
         </div>
         <div className="space-y-2">
-          <Label>Address</Label>
-          <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          <Label htmlFor="business-address">Address *</Label>
+          <Input id="business-address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
         </div>
         <div className="grid sm:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label>City</Label>
-            <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+            <Label htmlFor="business-city">City</Label>
+            <Input id="business-city" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
           </div>
           <div className="space-y-2">
-            <Label>State</Label>
-            <Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} />
+            <Label htmlFor="business-state">Province / State</Label>
+            <Input id="business-state" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} />
           </div>
           <div className="space-y-2">
-            <Label>ZIP Code</Label>
-            <Input value={form.zipCode} onChange={(e) => setForm({ ...form, zipCode: e.target.value })} />
+            <Label htmlFor="business-zip-code">Postal Code</Label>
+            <Input id="business-zip-code" value={form.zipCode} onChange={(e) => setForm({ ...form, zipCode: e.target.value })} />
           </div>
-        </div>
-        <div className="space-y-2">
-          <Label>Description</Label>
-          <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </div>
         <Button
           className="w-full"
           onClick={() => mutation.mutate({ step: "BUSINESS_PROFILE", data: form })}
-          disabled={mutation.isPending}
+          disabled={mutation.isPending || !verified}
         >
           {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Continue
         </Button>
+        {!verified && (
+          <p className="text-xs text-muted-foreground text-center">
+            Please verify your phone number to continue
+          </p>
+        )}
+        {mutation.isError && (
+          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function ServicesStep({ tenant, mutation }: { tenant: any; mutation: any }) {
-  const [services, setServices] = useState<Array<{ name: string; duration: number; price: number }>>(
-    tenant?.services?.length > 0
-      ? tenant.services.map((s: any) => ({ name: s.name, duration: s.duration, price: s.price || 0 }))
-      : []
-  );
+// ─── Industry Step ────────────────────────────────────────────────
 
-  function addService(name: string = "", duration: number = 60, price: number = 0) {
-    setServices([...services, { name, duration, price }]);
-  }
+function IndustryStep({
+  tenant,
+  mutation,
+  goBack,
+}: {
+  tenant: TenantData;
+  mutation: OnboardingMutation;
+  goBack: GoBackMutation;
+}) {
+  const [industry, setIndustry] = useState(tenant?.industry || "");
+  const [description, setDescription] = useState(tenant?.description || "");
 
-  function removeService(index: number) {
-    setServices(services.filter((_, i) => i !== index));
-  }
-
-  function updateService(index: number, field: string, value: any) {
-    const updated = [...services];
-    updated[index] = { ...updated[index], [field]: value };
-    setServices(updated);
-  }
+  // Group industries by category
+  const categories = Array.from(new Set(INDUSTRIES.map((i) => i.category)));
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Services</CardTitle>
-        <CardDescription>Add the services your business offers</CardDescription>
+        <CardTitle>Industry</CardTitle>
+        <CardDescription>Select the industry that best describes your business</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {services.length === 0 && (
-          <div className="text-center py-6 text-muted-foreground">
-            <p>No services added yet. Add your own or use suggestions below.</p>
-          </div>
-        )}
-        {services.map((service, index) => (
-          <div key={index} className="flex items-start gap-2 rounded-lg border p-3">
-            <div className="flex-1 grid sm:grid-cols-3 gap-2">
-              <Input
-                placeholder="Service name"
-                value={service.name}
-                onChange={(e) => updateService(index, "name", e.target.value)}
-              />
-              <Input
-                type="number"
-                placeholder="Duration (min)"
-                value={service.duration}
-                onChange={(e) => updateService(index, "duration", parseInt(e.target.value) || 0)}
-              />
-              <Input
-                type="number"
-                placeholder="Price ($)"
-                value={service.price}
-                onChange={(e) => updateService(index, "price", parseFloat(e.target.value) || 0)}
-              />
-            </div>
-            <Button variant="ghost" size="icon" onClick={() => removeService(index)}>
-              <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
-          </div>
-        ))}
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => addService()}>
-            <Plus className="h-4 w-4 mr-1" /> Add Custom
-          </Button>
-          {DEFAULT_SERVICES.filter(
-            (ds) => !services.some((s) => s.name === ds.name)
-          ).slice(0, 4).map((ds) => (
-            <Button
-              key={ds.name}
-              variant="outline"
-              size="sm"
-              onClick={() => addService(ds.name, ds.duration, ds.price)}
-            >
-              + {ds.name}
-            </Button>
-          ))}
+        <div className="space-y-2">
+          <Label>Industry *</Label>
+          <Select value={industry} onChange={(e) => setIndustry(e.target.value)}>
+            <option value="">Select an industry...</option>
+            {categories.map((cat) => (
+              <optgroup key={cat} label={cat}>
+                {INDUSTRIES.filter((i) => i.category === cat).map((i) => (
+                  <option key={i.value} value={i.value}>
+                    {i.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </Select>
         </div>
-        <Button
-          className="w-full"
-          onClick={() => mutation.mutate({ step: "SERVICES", data: { services } })}
-          disabled={mutation.isPending || services.length === 0}
-        >
-          {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Continue
-        </Button>
+        <div className="space-y-2">
+          <Label>Business Description</Label>
+          <Textarea
+            placeholder="Briefly describe your business and the services you offer..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => goBack.mutate()}
+            disabled={goBack.isPending}
+          >
+            {goBack.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronLeft className="h-4 w-4 mr-1" />
+            )}
+            Back
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={() => mutation.mutate({ step: "INDUSTRY", data: { industry, description } })}
+            disabled={mutation.isPending || !industry}
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Continue
+          </Button>
+        </div>
+        {mutation.isError && (
+          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function SubscriptionStep({ tenant, mutation }: { tenant: any; mutation: any }) {
-  const { data: plans, isLoading } = useQuery({
+// ─── Phone Setup Step ─────────────────────────────────────────────
+
+function PhoneSetupStep({
+  tenant,
+  mutation,
+  goBack,
+}: {
+  tenant: TenantData;
+  mutation: OnboardingMutation;
+  goBack: GoBackMutation;
+}) {
+  const queryClient = useQueryClient();
+
+  // Build location summary from tenant address
+  const locationParts = [tenant?.city, tenant?.state].filter(Boolean);
+  const locationLabel = locationParts.length > 0 ? locationParts.join(", ") : null;
+
+  const {
+    data: availableNumbers,
+    isLoading: searching,
+    error: searchError,
+  } = useQuery<AvailableNumber[]>({
+    queryKey: ["available-numbers"],
+    queryFn: async () => {
+      const res = await fetch("/api/twilio/available-numbers");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Search failed");
+      return json.data;
+    },
+    enabled: !tenant?.assignedTwilioNumber,
+  });
+
+  const purchaseMutation = useMutation({
+    mutationFn: async (phoneNumber: string) => {
+      const res = await fetch("/api/twilio/available-numbers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneNumber }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Purchase failed");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenant"] });
+    },
+  });
+
+  const hasNumber = !!tenant?.assignedTwilioNumber;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Phone Setup</CardTitle>
+        <CardDescription>
+          {hasNumber
+            ? "Your dedicated phone number is ready"
+            : "Choose a dedicated phone number for your business"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {hasNumber ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4 flex items-center gap-3">
+            <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
+            <div>
+              <p className="font-medium text-green-900">Assigned Number</p>
+              <p className="text-lg font-mono text-green-800">{tenant.assignedTwilioNumber}</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {locationLabel && (
+              <p className="text-sm text-muted-foreground">
+                Showing numbers near <span className="font-medium text-foreground">{locationLabel}</span> based on your business address.
+              </p>
+            )}
+
+            {searching && (
+              <div className="text-center py-4 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
+                Searching available numbers{locationLabel ? ` near ${locationLabel}` : ""}...
+              </div>
+            )}
+
+            {searchError && (
+              <p className="text-sm text-destructive text-center py-4">
+                {(searchError as Error).message}
+              </p>
+            )}
+
+            {availableNumbers && availableNumbers.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No numbers found in your area. Please contact support for assistance.
+              </p>
+            )}
+
+            {availableNumbers && availableNumbers.length > 0 && (
+              <div className="space-y-2">
+                {availableNumbers.map((n) => (
+                  <div
+                    key={n.phoneNumber}
+                    className="flex items-center justify-between rounded-lg border p-3"
+                  >
+                    <div>
+                      <p className="font-mono font-medium">{n.phoneNumber}</p>
+                      {n.locality && (
+                        <p className="text-xs text-muted-foreground">
+                          {n.locality}
+                          {n.region ? `, ${n.region}` : ""}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => purchaseMutation.mutate(n.phoneNumber)}
+                      disabled={purchaseMutation.isPending}
+                    >
+                      {purchaseMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Phone className="h-4 w-4 mr-1" /> Select
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {purchaseMutation.isError && (
+              <p className="text-xs text-destructive text-center">
+                {purchaseMutation.error.message}
+              </p>
+            )}
+          </>
+        )}
+
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => goBack.mutate()}
+            disabled={goBack.isPending}
+          >
+            {goBack.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronLeft className="h-4 w-4 mr-1" />
+            )}
+            Back
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={() => mutation.mutate({ step: "PHONE_SETUP", data: {} })}
+            disabled={mutation.isPending || !hasNumber}
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Continue
+          </Button>
+        </div>
+        {mutation.isError && (
+          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Subscription Step ────────────────────────────────────────────
+
+function SubscriptionStep({
+  tenant,
+  mutation,
+  goBack,
+}: {
+  tenant: TenantData;
+  mutation: OnboardingMutation;
+  goBack: GoBackMutation;
+}) {
+  const { data: plans, isLoading } = useQuery<PlanData[]>({
     queryKey: ["plans"],
     queryFn: async () => {
       const res = await fetch("/api/public/plans");
@@ -297,19 +686,24 @@ function SubscriptionStep({ tenant, mutation }: { tenant: any; mutation: any }) 
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid sm:grid-cols-3 gap-4">
-          {plans?.map((plan: any) => (
+          {plans?.map((plan) => (
             <div
               key={plan.id}
               className={`rounded-lg border-2 p-4 cursor-pointer transition ${
-                selectedPlan === plan.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                selectedPlan === plan.id
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50"
               }`}
               onClick={() => setSelectedPlan(plan.id)}
             >
               <h3 className="font-semibold">{plan.name}</h3>
-              <p className="text-2xl font-bold mt-1">${plan.price}<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
+              <p className="text-2xl font-bold mt-1">
+                ${plan.price}
+                <span className="text-sm font-normal text-muted-foreground">/mo</span>
+              </p>
               <p className="text-xs text-muted-foreground mt-1">{plan.description}</p>
               <ul className="mt-3 space-y-1">
-                {plan.features?.map((f: string) => (
+                {plan.features?.map((f) => (
                   <li key={f} className="text-xs flex items-center gap-1">
                     <Check className="h-3 w-3 text-green-600" /> {f}
                   </li>
@@ -321,20 +715,64 @@ function SubscriptionStep({ tenant, mutation }: { tenant: any; mutation: any }) 
             </div>
           ))}
         </div>
-        <Button
-          className="w-full"
-          onClick={() => mutation.mutate({ step: "SUBSCRIPTION", data: { planId: selectedPlan } })}
-          disabled={mutation.isPending || !selectedPlan}
-        >
-          {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {tenant?.stripeCustomerId ? "Subscribe & Continue" : "Continue"}
-        </Button>
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => goBack.mutate()}
+            disabled={goBack.isPending}
+          >
+            {goBack.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronLeft className="h-4 w-4 mr-1" />
+            )}
+            Back
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={() => mutation.mutate({ step: "SUBSCRIPTION", data: { planId: selectedPlan } })}
+            disabled={mutation.isPending || !selectedPlan}
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {tenant?.stripeCustomerId ? "Subscribe & Continue" : "Continue"}
+          </Button>
+        </div>
+        {mutation.isError && (
+          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function ReviewStep({ tenant, mutation, router }: { tenant: any; mutation: any; router: any }) {
+// ─── Review Step ──────────────────────────────────────────────────
+
+function ReviewStep({
+  tenant,
+  mutation,
+  goBack,
+}: {
+  tenant: TenantData;
+  mutation: OnboardingMutation;
+  goBack: GoBackMutation;
+}) {
+  const { update: updateSession } = useSession();
+  const industryLabel = INDUSTRIES.find((i) => i.value === tenant?.industry)?.label || tenant?.industry || "Not set";
+
+  const handleGoLive = () => {
+    mutation.mutate(
+      { step: "REVIEW", data: {} },
+      {
+        onSuccess: async () => {
+          // Refresh the session so the JWT token gets updated tenantStatus=ACTIVE
+          // Without this, the middleware still sees ONBOARDING and redirects back
+          await updateSession();
+          window.location.href = "/dashboard";
+        },
+      }
+    );
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -352,16 +790,16 @@ function ReviewStep({ tenant, mutation, router }: { tenant: any; mutation: any; 
             <p className="font-medium text-primary">/shop/{tenant?.slug}</p>
           </div>
           <div>
+            <p className="text-sm text-muted-foreground">Industry</p>
+            <p className="font-medium">{industryLabel}</p>
+          </div>
+          <div>
             <p className="text-sm text-muted-foreground">Business Phone Number</p>
             <p className="font-medium">{tenant?.businessPhoneNumber || "Not set"}</p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Assigned Twilio Number</p>
-            <p className="font-medium">{tenant?.assignedTwilioNumber || "Pending assignment by admin"}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Services</p>
-            <p className="font-medium">{tenant?.services?.length || 0} services configured</p>
+            <p className="font-medium">{tenant?.assignedTwilioNumber || "Not set"}</p>
           </div>
         </div>
 
@@ -369,24 +807,38 @@ function ReviewStep({ tenant, mutation, router }: { tenant: any; mutation: any; 
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
             <p className="text-sm font-medium text-blue-900">Call Forwarding Setup</p>
             <p className="text-sm text-blue-700 mt-1">
-              Set up call forwarding from your business phone ({tenant?.businessPhoneNumber}) to your assigned Twilio number ({tenant?.assignedTwilioNumber}) through your carrier. This ensures missed calls are handled automatically.
+              Set up call forwarding from your business phone ({tenant?.businessPhoneNumber}) to your
+              assigned Twilio number ({tenant?.assignedTwilioNumber}) through your carrier. This
+              ensures missed calls are handled automatically.
             </p>
           </div>
         )}
 
-        <Button
-          className="w-full"
-          onClick={() =>
-            mutation.mutate(
-              { step: "REVIEW", data: {} },
-              { onSuccess: () => router.push("/dashboard") }
-            )
-          }
-          disabled={mutation.isPending}
-        >
-          {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Go Live
-        </Button>
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => goBack.mutate()}
+            disabled={goBack.isPending}
+          >
+            {goBack.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronLeft className="h-4 w-4 mr-1" />
+            )}
+            Back
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={handleGoLive}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Go Live
+          </Button>
+        </div>
+        {mutation.isError && (
+          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
+        )}
       </CardContent>
     </Card>
   );

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { DayOfWeek } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
@@ -16,8 +17,8 @@ export async function GET(
     }
 
     const date = req.nextUrl.searchParams.get("date");
-    if (!date) {
-      return NextResponse.json({ success: false, error: "Date parameter required" }, { status: 400 });
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return NextResponse.json({ success: false, error: "Invalid date format" }, { status: 400 });
     }
 
     // Get day of week from date — parse directly to avoid timezone issues
@@ -28,7 +29,7 @@ export async function GET(
 
     // Get business hours for that day
     const businessHours = await prisma.businessHours.findUnique({
-      where: { tenantId_day: { tenantId: tenant.id, day: dayOfWeek as any } },
+      where: { tenantId_day: { tenantId: tenant.id, day: dayOfWeek as DayOfWeek } },
     });
 
     if (!businessHours || !businessHours.isOpen) {

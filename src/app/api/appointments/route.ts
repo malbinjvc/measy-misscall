@@ -2,24 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { createAppointmentSchema, updateAppointmentSchema } from "@/lib/validations";
 import { computeAppointmentPrice } from "@/lib/appointment-helpers";
+import { sanitizePagination } from "@/lib/utils";
+import { z, ZodError } from "zod";
 
 const appointmentInclude = {
   service: true,
   serviceOption: {
     include: { subOptions: { where: { isActive: true } } },
   },
-};
+} satisfies Prisma.AppointmentInclude;
 
-function enrichAppointment(apt: any) {
+type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
+  include: typeof appointmentInclude;
+}>;
+
+function enrichAppointment(apt: AppointmentWithRelations) {
   const totalPrice = computeAppointmentPrice(
     { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
     apt.service,
     apt.serviceOption
   );
   const resolvedSubOptions = apt.serviceOption?.subOptions?.filter(
-    (s: any) => apt.selectedSubOptions?.includes(s.id)
+    (s) => apt.selectedSubOptions?.includes(s.id)
   ) ?? [];
   return { ...apt, totalPrice, resolvedSubOptions };
 }
@@ -57,7 +64,7 @@ export async function GET(req: NextRequest) {
       const enriched = appointments.map(enrichAppointment);
 
       // Group by Toronto date (shift midnight UTC → noon to prevent day rollback)
-      const grouped: Record<string, any[]> = {};
+      const grouped: Record<string, ReturnType<typeof enrichAppointment>[]> = {};
       for (const apt of enriched) {
         const d = new Date(apt.date);
         if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) d.setUTCHours(12);
@@ -75,12 +82,11 @@ export async function GET(req: NextRequest) {
     }
 
     // List mode (default): paginated with stats
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "20");
+    const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
 
-    const where: any = { tenantId };
-    if (status) where.status = status;
+    const where: Prisma.AppointmentWhereInput = { tenantId };
+    if (status) where.status = status as Prisma.EnumAppointmentStatusFilter;
 
     const [appointments, total, statusCounts] = await Promise.all([
       prisma.appointment.findMany({
@@ -134,7 +140,7 @@ export async function GET(req: NextRequest) {
       totalPages: Math.ceil(total / pageSize),
       stats,
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Appointments fetch error:", error);
     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
   }
@@ -216,13 +222,13 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, data: enrichAppointment(appointment) });
-  } catch (error: any) {
-    if (error.name === "ZodError") {
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
       const fieldErrors: Record<string, string> = {};
-      for (const issue of error.issues ?? []) {
+      for (const issue of error.issues) {
         const field = issue.path?.[0];
-        if (field && !fieldErrors[field]) {
-          fieldErrors[field] = issue.message;
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
         }
       }
       return NextResponse.json(
@@ -245,11 +251,12 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
 
     // Bulk update: { ids: [...], status: "..." }
-    if (body.ids && Array.isArray(body.ids)) {
-      const { ids, status } = body;
-      if (!status || !["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].includes(status)) {
-        return NextResponse.json({ success: false, error: "Invalid status" }, { status: 400 });
-      }
+    if (body.ids) {
+      const bulkSchema = z.object({
+        ids: z.array(z.string().min(1), { message: "ids must be an array of strings" }).min(1, "ids must not be empty"),
+        status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"], { message: "Invalid status" }),
+      });
+      const { ids, status } = bulkSchema.parse(body);
 
       const result = await prisma.appointment.updateMany({
         where: { id: { in: ids }, tenantId: session.user.tenantId },
@@ -261,6 +268,11 @@ export async function PATCH(req: NextRequest) {
 
     // Single update: { id: "...", status: "...", notes: "...", date: "...", startTime: "..." }
     const { id, ...data } = body;
+
+    if (!id || typeof id !== "string") {
+      return NextResponse.json({ success: false, error: "Appointment ID is required" }, { status: 400 });
+    }
+
     const validated = updateAppointmentSchema.parse(data);
 
     const appointment = await prisma.appointment.findFirst({
@@ -273,18 +285,42 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Build update payload
-    const updateData: any = {};
+    const updateData: Prisma.AppointmentUpdateInput = {};
     if (validated.status) updateData.status = validated.status;
     if (validated.notes !== undefined) updateData.notes = validated.notes;
 
     // Reschedule: recalculate endTime from service duration
     if (validated.date && validated.startTime) {
-      const duration = (appointment as any).serviceOption?.duration || (appointment as any).service.duration;
+      const duration = appointment.serviceOption?.duration || appointment.service.duration;
       const totalDuration = duration * (appointment.quantity || 1);
       const [hours, minutes] = validated.startTime.split(":").map(Number);
       const startMinutes = hours * 60 + minutes;
       const endMinutes = startMinutes + totalDuration;
       const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+      // Check for overlapping appointments before rescheduling
+      const appointmentDate = new Date(validated.date + "T00:00:00.000Z");
+      const endOfDay = new Date(validated.date + "T23:59:59.999Z");
+
+      const overlapping = await prisma.appointment.findFirst({
+        where: {
+          tenantId: session.user.tenantId,
+          id: { not: id },
+          date: { gte: appointmentDate, lte: endOfDay },
+          status: { not: "CANCELLED" },
+          AND: [
+            { startTime: { lt: endTime } },
+            { endTime: { gt: validated.startTime } },
+          ],
+        },
+      });
+
+      if (overlapping) {
+        return NextResponse.json(
+          { success: false, error: "This time slot is already booked" },
+          { status: 409 }
+        );
+      }
 
       updateData.date = new Date(validated.date);
       updateData.startTime = validated.startTime;
@@ -298,7 +334,20 @@ export async function PATCH(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, data: enrichAppointment(updated) });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const field = issue.path?.[0];
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
+        }
+      }
+      return NextResponse.json(
+        { success: false, error: "Validation failed", fieldErrors },
+        { status: 400 }
+      );
+    }
     console.error("Appointment update error:", error);
     return NextResponse.json({ success: false, error: "Update failed" }, { status: 500 });
   }

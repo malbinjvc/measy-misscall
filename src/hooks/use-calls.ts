@@ -2,8 +2,50 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+interface CallRecord {
+  id: string;
+  from: string;
+  status: string;
+  ivrResponse: string | null;
+  createdAt: string;
+  [key: string]: unknown;
+}
+
+interface PaginatedResponse<T> {
+  data: T[];
+  page: number;
+  totalPages: number;
+  total: number;
+}
+
+interface AppointmentRecord {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  [key: string]: unknown;
+}
+
+interface ServiceRecord {
+  id: string;
+  name: string;
+  duration: number;
+  price: number | null;
+  [key: string]: unknown;
+}
+
+interface DashboardStats {
+  totalCalls: number;
+  totalAppointments: number;
+  totalRevenue: number;
+  [key: string]: unknown;
+}
+
 export function useCalls(page: number = 1, status?: string, ivrResponse?: string) {
-  return useQuery({
+  return useQuery<PaginatedResponse<CallRecord>>({
     queryKey: ["calls", page, status, ivrResponse],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
@@ -17,7 +59,7 @@ export function useCalls(page: number = 1, status?: string, ivrResponse?: string
 }
 
 export function useAppointments(page: number = 1, status?: string) {
-  return useQuery({
+  return useQuery<PaginatedResponse<AppointmentRecord>>({
     queryKey: ["appointments", page, status],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
@@ -30,7 +72,7 @@ export function useAppointments(page: number = 1, status?: string) {
 }
 
 export function useServices() {
-  return useQuery({
+  return useQuery<{ data: ServiceRecord[] }>({
     queryKey: ["services"],
     queryFn: async () => {
       const res = await fetch("/api/services");
@@ -41,7 +83,7 @@ export function useServices() {
 }
 
 export function useDashboardStats() {
-  return useQuery({
+  return useQuery<DashboardStats>({
     queryKey: ["dashboard-stats"],
     queryFn: async () => {
       const res = await fetch("/api/dashboard/stats");

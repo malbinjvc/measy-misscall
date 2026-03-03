@@ -4,10 +4,13 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { generateIvrAudio } from "@/lib/elevenlabs";
+import { businessProfileSchema, onboardingStepSchema } from "@/lib/validations";
+import { z, ZodError } from "zod";
 
 const STEP_ORDER = [
   "BUSINESS_PROFILE",
-  "SERVICES",
+  "INDUSTRY",
+  "PHONE_SETUP",
   "SUBSCRIPTION",
   "REVIEW",
 ] as const;
@@ -19,57 +22,220 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const { step, data } = await req.json();
+    const { step, data } = onboardingStepSchema.parse(await req.json());
     const tenantId = session.user.tenantId;
+
+    // Handle backward navigation
+    if (step === "GO_BACK") {
+      const result = await prisma.$transaction(async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { onboardingStep: true },
+        });
+        if (!tenant) return { error: "NOT_FOUND" } as const;
+
+        const currentIndex = STEP_ORDER.indexOf(tenant.onboardingStep as typeof STEP_ORDER[number]);
+        if (currentIndex <= 0) return { error: "FIRST_STEP" } as const;
+
+        await tx.tenant.update({
+          where: { id: tenantId },
+          data: { onboardingStep: STEP_ORDER[currentIndex - 1] },
+        });
+        return { success: true } as const;
+      });
+
+      if ("error" in result) {
+        if (result.error === "NOT_FOUND") {
+          return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
+        }
+        return NextResponse.json({ success: false, error: "Already at first step" }, { status: 400 });
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // Handle Stripe return — verify session and advance step
+    if (step === "CONFIRM_SUBSCRIPTION") {
+      const sessionId = data.sessionId;
+      if (!sessionId) {
+        return NextResponse.json({ success: false, error: "Session ID required" }, { status: 400 });
+      }
+
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { onboardingStep: true },
+      });
+
+      // Already advanced (webhook handled it)
+      if (tenant?.onboardingStep === "REVIEW") {
+        return NextResponse.json({ success: true });
+      }
+
+      // Verify the checkout session with Stripe
+      const { stripe } = await import("@/lib/stripe");
+      const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
+
+      if (
+        checkoutSession.payment_status !== "paid" ||
+        checkoutSession.metadata?.tenantId !== tenantId
+      ) {
+        return NextResponse.json(
+          { success: false, error: "Payment not completed" },
+          { status: 400 }
+        );
+      }
+
+      // Create subscription if webhook hasn't done it yet
+      const subscriptionId = checkoutSession.subscription as string;
+      if (subscriptionId) {
+        const { upsertSubscriptionFromStripe } = await import("@/lib/stripe");
+        await upsertSubscriptionFromStripe(tenantId, subscriptionId);
+      }
+
+      // Advance to REVIEW
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { onboardingStep: "REVIEW" },
+      });
+
+      return NextResponse.json({ success: true });
+    }
 
     switch (step) {
       case "BUSINESS_PROFILE": {
+        // Validate required fields with Zod
+        const profileData = businessProfileSchema.parse(data);
+
+        const normalizedBusinessPhone = normalizePhoneNumber(profileData.businessPhoneNumber);
+        const normalizedNewPhone = normalizePhoneNumber(profileData.phone);
+
+        // All checks and updates in a single transaction for atomicity
+        const profileResult = await prisma.$transaction(async (tx) => {
+          // Check businessPhoneNumber uniqueness
+          if (normalizedBusinessPhone) {
+            const existing = await tx.tenant.findFirst({
+              where: { businessPhoneNumber: normalizedBusinessPhone, id: { not: tenantId } },
+            });
+            if (existing) return { error: "PHONE_TAKEN" } as const;
+          }
+
+          // Get current tenant
+          const currentTenant = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { phone: true, phoneVerified: true, slug: true },
+          });
+
+          // Check slug uniqueness
+          if (profileData.slug && profileData.slug !== currentTenant?.slug) {
+            const existingSlug = await tx.tenant.findFirst({
+              where: { slug: profileData.slug, id: { not: tenantId } },
+            });
+            if (existingSlug) return { error: "SLUG_TAKEN" } as const;
+          }
+
+          // Determine phoneVerified status
+          const normalizedCurrentPhone = normalizePhoneNumber(currentTenant?.phone);
+          const phoneChanged = normalizedNewPhone !== normalizedCurrentPhone;
+          const phoneVerified = phoneChanged ? false : (currentTenant?.phoneVerified ?? false);
+
+          if (!phoneVerified) return { error: "PHONE_NOT_VERIFIED" } as const;
+
+          // Update profile
+          await tx.tenant.update({
+            where: { id: tenantId },
+            data: {
+              name: profileData.name,
+              slug: profileData.slug,
+              email: profileData.email,
+              phone: normalizedNewPhone,
+              address: profileData.address || null,
+              city: profileData.city || null,
+              state: profileData.state || null,
+              zipCode: profileData.zipCode || null,
+              businessPhoneNumber: normalizedBusinessPhone,
+              onboardingStep: "INDUSTRY",
+              ...(phoneChanged ? { phoneVerified: false } : {}),
+            },
+          });
+          return { success: true } as const;
+        });
+
+        if ("error" in profileResult) {
+          if (profileResult.error === "PHONE_TAKEN") {
+            return NextResponse.json(
+              { success: false, error: "This business phone number is already registered" },
+              { status: 400 }
+            );
+          }
+          if (profileResult.error === "SLUG_TAKEN") {
+            return NextResponse.json(
+              { success: false, error: "Slug already taken" },
+              { status: 400 }
+            );
+          }
+          return NextResponse.json(
+            { success: false, error: "Please verify your phone number first." },
+            { status: 400 }
+          );
+        }
+        break;
+      }
+
+      case "INDUSTRY": {
+        const industrySchema = z.object({
+          industry: z.string().min(1, "Please select an industry"),
+          description: z.string().optional(),
+        });
+        const industryData = industrySchema.parse(data);
+
         await prisma.tenant.update({
           where: { id: tenantId },
           data: {
-            name: data.name,
-            slug: data.slug,
-            email: data.email,
-            phone: data.phone || null,
-            address: data.address || null,
-            city: data.city || null,
-            state: data.state || null,
-            zipCode: data.zipCode || null,
-            description: data.description || null,
-            businessPhoneNumber: normalizePhoneNumber(data.businessPhoneNumber),
-            onboardingStep: "SERVICES",
+            industry: industryData.industry,
+            description: industryData.description || null,
+            onboardingStep: "PHONE_SETUP",
           },
         });
         break;
       }
 
-      case "SERVICES": {
-        // Delete existing services and recreate
-        await prisma.service.deleteMany({ where: { tenantId } });
-
-        if (data.services && data.services.length > 0) {
-          await prisma.service.createMany({
-            data: data.services.map((s: any, index: number) => ({
-              name: s.name,
-              duration: s.duration || 60,
-              price: s.price || null,
-              tenantId,
-              sortOrder: index,
-            })),
+      case "PHONE_SETUP": {
+        const phoneResult = await prisma.$transaction(async (tx) => {
+          const tenant = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { assignedTwilioNumber: true },
           });
-        }
+          if (!tenant?.assignedTwilioNumber) return { error: "NO_NUMBER" } as const;
 
-        await prisma.tenant.update({
-          where: { id: tenantId },
-          data: { onboardingStep: "SUBSCRIPTION" },
+          await tx.tenant.update({
+            where: { id: tenantId },
+            data: { onboardingStep: "SUBSCRIPTION" },
+          });
+          return { success: true } as const;
         });
+
+        if ("error" in phoneResult) {
+          return NextResponse.json(
+            { success: false, error: "Please select and purchase a phone number first" },
+            { status: 400 }
+          );
+        }
         break;
       }
 
       case "SUBSCRIPTION": {
-        // Create a basic subscription (Stripe integration will be handled via checkout)
-        if (data.planId) {
-          const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
+        const subscriptionSchema = z.object({
+          planId: z.string().min(1, "Plan ID is required").optional(),
+        });
+        const subscriptionData = subscriptionSchema.parse(data);
+
+        if (subscriptionData.planId) {
+          // Atomic read of plan + tenant
+          const { plan, tenant: subTenant } = await prisma.$transaction(async (tx) => {
+            const plan = await tx.plan.findUnique({ where: { id: subscriptionData.planId! } });
+            const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+            return { plan, tenant };
+          });
+
           if (!plan) {
             return NextResponse.json({ success: false, error: "Plan not found" }, { status: 400 });
           }
@@ -77,13 +243,19 @@ export async function POST(req: NextRequest) {
           // If Stripe is configured, create checkout session
           if (plan.stripePriceId && process.env.STRIPE_SECRET_KEY) {
             const { createStripeCustomer, createCheckoutSession } = await import("@/lib/stripe");
-            const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
 
-            let stripeCustomerId = tenant?.stripeCustomerId;
+            if (!subTenant) {
+              return NextResponse.json(
+                { success: false, error: "Tenant not found" },
+                { status: 404 }
+              );
+            }
+
+            let stripeCustomerId = subTenant.stripeCustomerId;
             if (!stripeCustomerId) {
               const customer = await createStripeCustomer(
-                tenant!.email,
-                tenant!.name,
+                subTenant.email,
+                subTenant.name,
                 tenantId
               );
               stripeCustomerId = customer.id;
@@ -107,13 +279,13 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // No Stripe - create free subscription
+          // No Stripe — create free subscription
           await prisma.subscription.upsert({
             where: { tenantId },
-            update: { planId: data.planId, status: "ACTIVE" },
+            update: { planId: subscriptionData.planId, status: "ACTIVE" },
             create: {
               tenantId,
-              planId: data.planId,
+              planId: subscriptionData.planId,
               status: "ACTIVE",
             },
           });
@@ -170,10 +342,24 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const field = issue.path?.[0];
+        if (field && !fieldErrors[String(field)]) {
+          fieldErrors[String(field)] = issue.message;
+        }
+      }
+      return NextResponse.json(
+        { success: false, error: "Validation failed", fieldErrors },
+        { status: 400 }
+      );
+    }
     console.error("Onboarding error:", error);
+    const message = "Onboarding failed";
     return NextResponse.json(
-      { success: false, error: error.message || "Onboarding failed" },
+      { success: false, error: message },
       { status: 500 }
     );
   }

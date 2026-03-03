@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,20 +11,39 @@ import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
 import { Loader2, Save, CheckCircle2, XCircle, Phone, MessageSquare, Volume2 } from "lucide-react";
 
+interface PlatformSettings {
+  sharedTwilioSid: string | null;
+  sharedTwilioToken: string | null;
+  elevenlabsApiKey: string | null;
+  elevenlabsVoiceId: string | null;
+  maintenanceMode: boolean;
+}
+
+interface SettingsFormData {
+  sharedTwilioSid: string;
+  sharedTwilioToken: string;
+  elevenlabsApiKey: string;
+  elevenlabsVoiceId: string;
+  maintenanceMode: boolean;
+}
+
+type SettingsMutation = UseMutationResult<unknown, Error, SettingsFormData>;
+
 export default function AdminSettingsPage() {
   const queryClient = useQueryClient();
 
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading } = useQuery<PlatformSettings>({
     queryKey: ["platform-settings"],
     queryFn: async () => {
       const res = await fetch("/api/admin/settings");
+      if (!res.ok) throw new Error("Request failed");
       const json = await res.json();
       return json.data;
     },
   });
 
   const mutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: SettingsFormData) => {
       const res = await fetch("/api/admin/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -44,7 +63,7 @@ export default function AdminSettingsPage() {
   return <SettingsForm settings={settings} mutation={mutation} />;
 }
 
-function SettingsForm({ settings, mutation }: { settings: any; mutation: any }) {
+function SettingsForm({ settings, mutation }: { settings: PlatformSettings; mutation: SettingsMutation }) {
   const [form, setForm] = useState({
     sharedTwilioSid: settings.sharedTwilioSid || "",
     sharedTwilioToken: settings.sharedTwilioToken || "",
@@ -76,6 +95,7 @@ function SettingsForm({ settings, mutation }: { settings: any; mutation: any }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sid, token }),
       });
+      if (!res.ok) throw new Error("Request failed");
       const result = await res.json();
 
       if (result.success) {

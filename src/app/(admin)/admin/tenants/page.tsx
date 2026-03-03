@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -10,31 +10,68 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Building2, ChevronLeft, ChevronRight, Check, X } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Check, X, Trash2 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+
+interface TenantRow {
+  id: string;
+  name: string;
+  businessPhoneNumber: string | null;
+  assignedTwilioNumber: string | null;
+  status: string;
+  createdAt: string;
+  subscription?: { plan?: { name: string } } | null;
+  _count?: { calls: number };
+}
+
+interface TenantsResponse {
+  data: TenantRow[];
+  page: number;
+  totalPages: number;
+  total: number;
+}
+
+type TenantUpdatePayload = { id: string; status?: string; assignedTwilioNumber?: string };
+type TenantUpdateMutation = UseMutationResult<unknown, Error, TenantUpdatePayload>;
+type TenantDeleteMutation = UseMutationResult<unknown, Error, string>;
 
 export default function AdminTenantsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<TenantsResponse>({
     queryKey: ["admin-tenants", page, statusFilter],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
       const res = await fetch(`/api/admin/tenants?${params}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { id: string; status?: string; assignedTwilioNumber?: string }) => {
+    mutationFn: async (payload: TenantUpdatePayload) => {
       const res = await fetch("/api/admin/tenants", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) throw new Error("Request failed");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-tenants"] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (tenantId: string) => {
+      const res = await fetch("/api/admin/tenants", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId }),
+      });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-tenants"] }),
@@ -74,8 +111,8 @@ export default function AdminTenantsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.data.map((tenant: any) => (
-                  <TenantRow key={tenant.id} tenant={tenant} updateMutation={updateMutation} />
+                {data.data.map((tenant: TenantRow) => (
+                  <TenantRow key={tenant.id} tenant={tenant} updateMutation={updateMutation} deleteMutation={deleteMutation} />
                 ))}
               </TableBody>
             </Table>
@@ -95,9 +132,10 @@ export default function AdminTenantsPage() {
   );
 }
 
-function TenantRow({ tenant, updateMutation }: { tenant: any; updateMutation: any }) {
+function TenantRow({ tenant, updateMutation, deleteMutation }: { tenant: TenantRow; updateMutation: TenantUpdateMutation; deleteMutation: TenantDeleteMutation }) {
   const [editing, setEditing] = useState(false);
   const [twilioNumber, setTwilioNumber] = useState(tenant.assignedTwilioNumber || "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function saveTwilioNumber() {
     updateMutation.mutate({ id: tenant.id, assignedTwilioNumber: twilioNumber });
@@ -143,12 +181,39 @@ function TenantRow({ tenant, updateMutation }: { tenant: any; updateMutation: an
       <TableCell className="text-sm">{tenant._count?.calls || 0}</TableCell>
       <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
       <TableCell>
-        <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
-          <option value="ONBOARDING">Onboarding</option>
-          <option value="ACTIVE">Active</option>
-          <option value="SUSPENDED">Suspended</option>
-          <option value="DISABLED">Disabled</option>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
+            <option value="ONBOARDING">Onboarding</option>
+            <option value="ACTIVE">Active</option>
+            <option value="SUSPENDED">Suspended</option>
+            <option value="DISABLED">Disabled</option>
+          </Select>
+          {confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={deleteMutation.isPending}
+                onClick={() => { deleteMutation.mutate(tenant.id); setConfirmDelete(false); }}
+              >
+                {deleteMutation.isPending ? "..." : "Confirm"}
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   );

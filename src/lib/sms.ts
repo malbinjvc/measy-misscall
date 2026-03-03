@@ -50,7 +50,8 @@ export async function sendSms({
     });
 
     return { success: true, messageSid: message.sid, smsLogId: smsLog.id };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "SMS send failed";
     // Log failed SMS
     await prisma.smsLog.create({
       data: {
@@ -61,11 +62,11 @@ export async function sendSms({
         body,
         type,
         status: "FAILED",
-        errorMessage: error.message,
+        errorMessage: message,
       },
     });
 
-    return { success: false, error: error.message };
+    return { success: false, error: message };
   }
 }
 

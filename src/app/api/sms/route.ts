@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { sanitizePagination } from "@/lib/utils";
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,12 +13,11 @@ export async function GET(req: NextRequest) {
     }
 
     const searchParams = req.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "20");
+    const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
 
-    const where: any = { tenantId: session.user.tenantId, type: { not: "OTP_VERIFICATION" } };
-    if (status) where.status = status;
+    const where: Prisma.SmsLogWhereInput = { tenantId: session.user.tenantId, type: { not: "OTP_VERIFICATION" } };
+    if (status) where.status = status as Prisma.EnumSmsStatusFilter;
 
     const [logs, total] = await Promise.all([
       prisma.smsLog.findMany({

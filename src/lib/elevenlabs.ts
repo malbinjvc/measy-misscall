@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import prisma from "@/lib/prisma";
+import { decrypt, isEncrypted } from "@/lib/crypto";
 
 const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
 
@@ -19,12 +20,17 @@ async function getElevenLabsConfig() {
     where: { id: "platform-settings" },
   });
 
-  const apiKey = settings?.elevenlabsApiKey;
+  let apiKey = settings?.elevenlabsApiKey || null;
   if (!apiKey) return null;
+
+  // Decrypt the API key if it was encrypted at rest
+  if (isEncrypted(apiKey)) {
+    try { apiKey = decrypt(apiKey); } catch { return null; }
+  }
 
   return {
     apiKey,
-    voiceId: settings.elevenlabsVoiceId || DEFAULT_VOICE_ID,
+    voiceId: settings?.elevenlabsVoiceId || DEFAULT_VOICE_ID,
   };
 }
 
@@ -87,7 +93,8 @@ export async function generateIvrAudio(
     if (!buffer) return null;
 
     ensureDir();
-    const filename = `${tenantId}-${Date.now()}.mp3`;
+    const safeTenantId = tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
+    const filename = `${safeTenantId}-${Date.now()}.mp3`;
     fs.writeFileSync(path.join(IVR_DIR, filename), buffer);
 
     // Also generate shared messages if they don't exist yet

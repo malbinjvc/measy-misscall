@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
@@ -11,6 +12,25 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { PhoneCall, ChevronLeft, ChevronRight, MessageSquare, CheckCircle, RotateCcw } from "lucide-react";
 import { formatDateTime, formatPhoneNumber } from "@/lib/utils";
+
+interface CallSmsLog {
+  id: string;
+  body: string;
+  status: string;
+}
+
+interface CallRecord {
+  id: string;
+  from: string;
+  to: string;
+  callerNumber: string;
+  status: string;
+  ivrResponse: string;
+  createdAt: string;
+  duration: number;
+  callbackHandled: boolean;
+  smsLogs: CallSmsLog[];
+}
 
 export default function CallsPage() {
   const [page, setPage] = useState(1);
@@ -25,6 +45,7 @@ export default function CallsPage() {
       if (statusFilter) params.set("status", statusFilter);
       if (ivrFilter) params.set("ivrResponse", ivrFilter);
       const res = await fetch(`/api/calls?${params}`);
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
@@ -36,6 +57,7 @@ export default function CallsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callId, callbackHandled }),
       });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => {
@@ -90,12 +112,12 @@ export default function CallsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.data.map((call: any) => {
+                {data.data.map((call: CallRecord) => {
                   const isUnhandledCallback = call.ivrResponse === "CALLBACK" && !call.callbackHandled;
                   const latestSms = call.smsLogs?.length ? call.smsLogs[call.smsLogs.length - 1] : null;
                   return (
-                    <>
-                      <TableRow key={call.id} className={isUnhandledCallback ? "bg-red-50 border-l-4 border-l-red-500" : ""}>
+                    <React.Fragment key={call.id}>
+                      <TableRow className={isUnhandledCallback ? "bg-red-50 border-l-4 border-l-red-500" : ""}>
                         <TableCell className="text-sm">{formatDateTime(call.createdAt)}</TableCell>
                         <TableCell className="font-medium">{formatPhoneNumber(call.callerNumber)}</TableCell>
                         <TableCell><StatusBadge status={call.status} /></TableCell>
@@ -138,7 +160,7 @@ export default function CallsPage() {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </TableBody>

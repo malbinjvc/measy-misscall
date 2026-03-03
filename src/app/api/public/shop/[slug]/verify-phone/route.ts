@@ -1,14 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomInt } from "crypto";
 import prisma from "@/lib/prisma";
 import { phoneVerificationSchema } from "@/lib/validations";
 import { sendSms } from "@/lib/sms";
 import { normalizePhoneNumber } from "@/lib/utils";
+import { hashOtp } from "@/lib/crypto";
+import { verifyCsrf } from "@/lib/csrf";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { slug: string } }
 ) {
   try {
+    const csrfError = verifyCsrf(req);
+    if (csrfError) return csrfError;
+
+    const ip = getClientIp(req);
+    const limit = checkRateLimit(`verify-phone:${ip}`, { max: 5, windowSec: 60 });
+    if (!limit.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+
     const tenant = await prisma.tenant.findUnique({
       where: { slug: params.slug },
       select: { id: true, status: true, name: true, assignedTwilioNumber: true },
@@ -46,13 +57,14 @@ export async function POST(
     }
 
     // Generate 6-digit code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 999999).toString();
+    const hashedCode = hashOtp(code);
 
-    // Store verification record with 10-min expiry
+    // Store verification record with 10-min expiry (store hashed code)
     await prisma.phoneVerification.create({
       data: {
         phone,
-        code,
+        code: hashedCode,
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       },
     });

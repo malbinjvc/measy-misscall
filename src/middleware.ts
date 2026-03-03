@@ -30,8 +30,11 @@ export default withAuth(
         );
       }
 
-      // Block suspended tenants
-      if (token?.tenantStatus === "SUSPENDED") {
+      // Block suspended or disabled tenants
+      if (
+        token?.tenantStatus === "SUSPENDED" ||
+        token?.tenantStatus === "DISABLED"
+      ) {
         return NextResponse.redirect(
           new URL("/suspended", req.url)
         );

@@ -3,11 +3,12 @@
 import { createContext, useContext, ReactNode } from "react";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
+import { TenantData } from "@/types";
 
 interface TenantContext {
-  tenant: any | null;
+  tenant: TenantData | null;
   isLoading: boolean;
-  error: any;
+  error: Error | null;
   refetch: () => void;
 }
 

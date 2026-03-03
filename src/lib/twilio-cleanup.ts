@@ -24,8 +24,9 @@ export async function releaseTwilioNumber(twilioNumber: string): Promise<boolean
           if (numberResource.addressSid) updatePayload.addressSid = "";
           await client.incomingPhoneNumbers(numberResource.sid).update(updatePayload);
           console.log(`Successfully detached addresses from ${twilioNumber}`);
-        } catch (detachError: any) {
-          console.error(`Failed to detach addresses from ${twilioNumber}:`, detachError.message);
+        } catch (detachError: unknown) {
+          const msg = detachError instanceof Error ? detachError.message : "Unknown error";
+          console.error(`Failed to detach addresses from ${twilioNumber}:`, msg);
           // Still attempt removal — some Twilio accounts may not require this
         }
       }
@@ -36,8 +37,9 @@ export async function releaseTwilioNumber(twilioNumber: string): Promise<boolean
       console.warn(`Number ${twilioNumber} not found in Twilio account — may have already been released`);
       return true; // Already gone, consider it released
     }
-  } catch (error: any) {
-    console.error(`Failed to release Twilio number ${twilioNumber}:`, error.message, error.code, error.status);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Failed to release Twilio number ${twilioNumber}:`, msg);
     // Don't throw — number release failure shouldn't block the admin action
     return false;
   }

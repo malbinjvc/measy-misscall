@@ -14,10 +14,29 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
+interface PlanForm {
+  name: string;
+  description: string;
+  price: number;
+  interval: string;
+  maxCalls: number;
+  maxSms: number;
+  maxServices: number;
+  maxStaff: number;
+  features: string[];
+  isActive: boolean;
+  stripePriceId: string;
+}
+
+interface Plan extends PlanForm {
+  id: string;
+  _count?: { subscriptions: number };
+}
+
 export default function AdminPlansPage() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingPlan, setEditingPlan] = useState<any>(null);
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
   const [form, setForm] = useState({
     name: "", description: "", price: 0, interval: "month",
     maxCalls: 100, maxSms: 100, maxServices: 10, maxStaff: 3,
@@ -25,25 +44,28 @@ export default function AdminPlansPage() {
   });
   const [featureInput, setFeatureInput] = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<{ data: Plan[] }>({
     queryKey: ["admin-plans"],
     queryFn: async () => {
       const res = await fetch("/api/admin/plans");
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: PlanForm) => {
       const res = await fetch("/api/admin/plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-plans"] }); closeDialog(); },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: PlanForm & { id: string }) => {
       const res = await fetch("/api/admin/plans", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-plans"] }); closeDialog(); },
@@ -52,6 +74,7 @@ export default function AdminPlansPage() {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch("/api/admin/plans", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-plans"] }),
@@ -63,7 +86,7 @@ export default function AdminPlansPage() {
     setIsDialogOpen(true);
   }
 
-  function openEdit(plan: any) {
+  function openEdit(plan: Plan) {
     setEditingPlan(plan);
     setForm({
       name: plan.name, description: plan.description || "", price: plan.price, interval: plan.interval,
@@ -114,7 +137,7 @@ export default function AdminPlansPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data?.data?.map((plan: any) => (
+              {data?.data?.map((plan: Plan) => (
                 <TableRow key={plan.id}>
                   <TableCell className="font-medium">{plan.name}</TableCell>
                   <TableCell>{formatCurrency(plan.price)}/{plan.interval}</TableCell>
@@ -124,7 +147,7 @@ export default function AdminPlansPage() {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(plan)}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(plan.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { if (!window.confirm("Are you sure you want to delete this plan?")) return; deleteMutation.mutate(plan.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>

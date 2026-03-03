@@ -25,7 +25,7 @@ export async function POST() {
     );
 
     return NextResponse.json({ success: true, data: { url: portalSession.url } });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Portal error:", error);
     return NextResponse.json({ success: false, error: "Failed to create portal session" }, { status: 500 });
   }

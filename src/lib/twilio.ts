@@ -1,5 +1,6 @@
 import twilio from "twilio";
 import prisma from "./prisma";
+import { decrypt, isEncrypted } from "./crypto";
 
 // Cached credentials to avoid DB query on every call
 let cachedSid: string | null = null;
@@ -24,7 +25,12 @@ async function getTwilioCredentials(): Promise<{ sid: string; token: string }> {
   });
 
   const sid = settings?.sharedTwilioSid || process.env.TWILIO_ACCOUNT_SID;
-  const token = settings?.sharedTwilioToken || process.env.TWILIO_AUTH_TOKEN;
+  // Decrypt the token if it was encrypted at rest
+  let dbToken = settings?.sharedTwilioToken || null;
+  if (dbToken && isEncrypted(dbToken)) {
+    try { dbToken = decrypt(dbToken); } catch { /* fall through to env var */ dbToken = null; }
+  }
+  const token = dbToken || process.env.TWILIO_AUTH_TOKEN;
 
   if (!sid || !token) {
     throw new Error("Twilio credentials not configured. Ask your admin to connect a Twilio account in Platform Settings.");
@@ -62,8 +68,37 @@ export async function testTwilioConnection(
     const client = twilio(sid, token);
     const account = await client.api.accounts(sid).fetch();
     return { success: true, accountName: account.friendlyName };
-  } catch (error: any) {
-    return { success: false, error: error.message || "Invalid credentials" };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Invalid credentials";
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Verify an incoming Twilio webhook request.
+ * Extracts the signature header and form params, validates against our auth token.
+ * Returns true if valid, false otherwise.
+ */
+export async function verifyTwilioWebhook(req: Request): Promise<boolean> {
+  try {
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) return false;
+
+    // Build the full URL Twilio used to sign the request
+    const url = req.url;
+
+    // Parse form data into a plain object for validation
+    const clonedReq = req.clone();
+    const formData = await clonedReq.formData();
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      params[key] = value.toString();
+    });
+
+    return await validateTwilioSignature(signature, url, params);
+  } catch (error) {
+    console.error("Twilio webhook verification error:", error);
+    return false;
   }
 }
 

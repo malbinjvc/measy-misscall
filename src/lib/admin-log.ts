@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 interface LogAdminActionParams {
   action: string;
@@ -8,7 +9,7 @@ interface LogAdminActionParams {
   userId?: string;
   userName?: string;
   status?: "SUCCESS" | "FAILED";
-  metadata?: Record<string, any>;
+  metadata?: Prisma.InputJsonValue;
 }
 
 export async function logAdminAction(params: LogAdminActionParams) {

@@ -7,10 +7,12 @@ async function main() {
   console.log("Seeding database...");
 
   // Create super admin
-  const adminPassword = await bcrypt.hash("admin123", 12);
+  const rawAdminPw = process.env.SEED_ADMIN_PASSWORD;
+  if (!rawAdminPw) throw new Error("SEED_ADMIN_PASSWORD is not set in .env");
+  const adminPassword = await bcrypt.hash(rawAdminPw, 12);
   const superAdmin = await prisma.user.upsert({
     where: { email: "admin@measy.com" },
-    update: {},
+    update: { password: adminPassword },
     create: {
       email: "admin@measy.com",
       name: "Super Admin",
@@ -43,10 +45,12 @@ async function main() {
   console.log("Demo tenant created:", demoTenant.name);
 
   // Create tenant owner
-  const ownerPassword = await bcrypt.hash("owner123", 12);
+  const rawOwnerPw = process.env.SEED_OWNER_PASSWORD;
+  if (!rawOwnerPw) throw new Error("SEED_OWNER_PASSWORD is not set in .env");
+  const ownerPassword = await bcrypt.hash(rawOwnerPw, 12);
   const tenantOwner = await prisma.user.upsert({
     where: { email: "joe@example.com" },
-    update: {},
+    update: { password: ownerPassword },
     create: {
       email: "joe@example.com",
       name: "Joe Smith",
@@ -239,9 +243,14 @@ async function main() {
   ];
 
   for (const plan of plans) {
-    await prisma.plan.create({ data: plan });
+    const existing = await prisma.plan.findFirst({ where: { name: plan.name } });
+    if (existing) {
+      await prisma.plan.update({ where: { id: existing.id }, data: plan });
+    } else {
+      await prisma.plan.create({ data: plan });
+    }
   }
-  console.log(`${plans.length} plans created`);
+  console.log(`${plans.length} plans upserted`);
 
   // Create platform settings
   await prisma.platformSettings.upsert({

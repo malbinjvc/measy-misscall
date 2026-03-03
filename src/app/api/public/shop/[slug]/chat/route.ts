@@ -1,11 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { verifyCsrf } from "@/lib/csrf";
+import { chatMessageSchema } from "@/lib/validations";
+
+const chatTenantInclude = {
+  services: { where: { isActive: true }, orderBy: { sortOrder: "asc" as const } },
+  businessHours: { orderBy: { day: "asc" as const } },
+  subscription: { include: { plan: true } },
+} satisfies Prisma.TenantInclude;
+
+type ChatTenant = Prisma.TenantGetPayload<{ include: typeof chatTenantInclude }>;
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { slug: string } }
 ) {
   try {
+    const csrfError = verifyCsrf(req);
+    if (csrfError) return csrfError;
+
+    const ip = getClientIp(req);
+    const limit = checkRateLimit(`chat:${ip}`, { max: 30, windowSec: 60 });
+    if (!limit.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+
     const tenant = await prisma.tenant.findUnique({
       where: { slug: params.slug },
       include: {
@@ -32,14 +51,8 @@ export async function POST(
     }
 
     const body = await req.json();
-    const message = (body.message || "").trim().toLowerCase();
-
-    if (!message) {
-      return NextResponse.json(
-        { success: false, error: "Message is required" },
-        { status: 400 }
-      );
-    }
+    const { message: rawMessage } = chatMessageSchema.parse(body);
+    const message = rawMessage.trim().toLowerCase();
 
     const reply = generateReply(message, tenant);
 
@@ -50,7 +63,7 @@ export async function POST(
   }
 }
 
-function generateReply(message: string, tenant: any): string {
+function generateReply(message: string, tenant: ChatTenant): string {
   const slug = tenant.slug;
   const bookingUrl = `/shop/${slug}/book`;
 
@@ -58,7 +71,7 @@ function generateReply(message: string, tenant: any): string {
   if (message.match(/\b(hour|hours|open|close|time|schedule|when)\b/)) {
     const dayOrder = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
     const hoursLines = dayOrder.map((day) => {
-      const h = tenant.businessHours.find((bh: any) => bh.day === day);
+      const h = tenant.businessHours.find((bh) => bh.day === day);
       const dayName = day.charAt(0) + day.slice(1).toLowerCase();
       if (!h || !h.isOpen) return `${dayName}: Closed`;
       return `${dayName}: ${h.openTime} - ${h.closeTime}`;
@@ -71,7 +84,7 @@ function generateReply(message: string, tenant: any): string {
     if (tenant.services.length === 0) {
       return "We currently don't have any services listed. Please contact us directly for more information.";
     }
-    const serviceLines = tenant.services.map((s: any) => {
+    const serviceLines = tenant.services.map((s) => {
       const price = s.price ? `$${s.price}` : "Contact for pricing";
       return `- ${s.name} (${s.duration} min) — ${price}`;
     });

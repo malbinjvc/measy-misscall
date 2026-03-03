@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { stripe } from "@/lib/stripe";
-import { normalizePhoneNumber } from "@/lib/utils";
+import { normalizePhoneNumber, sanitizePagination } from "@/lib/utils";
 import { logAdminAction } from "@/lib/admin-log";
 import { releaseTwilioNumber, queueTwilioCleanup } from "@/lib/twilio-cleanup";
+import { getErrorMessage } from "@/lib/errors";
+import { updateTenantAdminSchema, deleteTenantSchema } from "@/lib/validations";
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,12 +18,11 @@ export async function GET(req: NextRequest) {
     }
 
     const searchParams = req.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "20");
+    const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
 
-    const where: any = {};
-    if (status) where.status = status;
+    const where: Prisma.TenantWhereInput = {};
+    if (status) where.status = status as Prisma.EnumTenantStatusFilter;
 
     const [tenants, total] = await Promise.all([
       prisma.tenant.findMany({
@@ -49,69 +51,74 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { id, status, assignedTwilioNumber } = await req.json();
+    const { id, status, assignedTwilioNumber } = updateTenantAdminSchema.parse(await req.json());
 
-    // Fetch current tenant state for logging
-    const currentTenant = await prisma.tenant.findUnique({
-      where: { id },
-      select: { name: true, status: true, assignedTwilioNumber: true },
+    // All DB operations in a single transaction for atomicity
+    const result = await prisma.$transaction(async (tx) => {
+      const currentTenant = await tx.tenant.findUnique({
+        where: { id },
+        select: { name: true, status: true, assignedTwilioNumber: true },
+      });
+
+      const updateData: Prisma.TenantUpdateInput = {};
+      if (status) updateData.status = status;
+
+      if (assignedTwilioNumber !== undefined) {
+        const numberToAssign = normalizePhoneNumber(assignedTwilioNumber);
+        if (numberToAssign) {
+          const existing = await tx.tenant.findFirst({
+            where: { assignedTwilioNumber: numberToAssign, id: { not: id } },
+          });
+          if (existing) {
+            return { conflict: `This number is already assigned to "${existing.name}"` } as const;
+          }
+        }
+        updateData.assignedTwilioNumber = numberToAssign;
+      }
+
+      // If suspending or disabling, clear the Twilio number in the DB
+      if ((status === "SUSPENDED" || status === "DISABLED") && currentTenant?.assignedTwilioNumber) {
+        updateData.assignedTwilioNumber = null;
+      }
+
+      const tenant = await tx.tenant.update({
+        where: { id },
+        data: updateData,
+      });
+
+      return { tenant, currentTenant } as const;
     });
 
-    // If suspending or disabling, release the tenant's Twilio number
-    if (status === "SUSPENDED" || status === "DISABLED") {
-      if (currentTenant?.assignedTwilioNumber) {
-        const released = await releaseTwilioNumber(currentTenant.assignedTwilioNumber);
-        // Clear the number from the tenant record
-        await prisma.tenant.update({
-          where: { id },
-          data: { assignedTwilioNumber: null },
-        });
-        await logAdminAction({
-          action: "TWILIO_NUMBER_RELEASED",
-          details: released
-            ? `Released Twilio number ${currentTenant.assignedTwilioNumber} from "${currentTenant.name}" due to status change to ${status}`
-            : `Failed to release Twilio number ${currentTenant.assignedTwilioNumber} from "${currentTenant.name}" — manual cleanup may be needed`,
+    if ("conflict" in result) {
+      return NextResponse.json({ success: false, error: result.conflict }, { status: 400 });
+    }
+
+    const { tenant, currentTenant } = result;
+
+    // Release Twilio number AFTER transaction (external API call, non-blocking)
+    if ((status === "SUSPENDED" || status === "DISABLED") && currentTenant?.assignedTwilioNumber) {
+      const released = await releaseTwilioNumber(currentTenant.assignedTwilioNumber);
+      await logAdminAction({
+        action: "TWILIO_NUMBER_RELEASED",
+        details: released
+          ? `Released Twilio number ${currentTenant.assignedTwilioNumber} from "${currentTenant.name}" due to status change to ${status}`
+          : `Failed to release Twilio number ${currentTenant.assignedTwilioNumber} from "${currentTenant.name}" — manual cleanup may be needed`,
+        tenantId: id,
+        tenantName: currentTenant.name,
+        userId: session.user.id,
+        userName: session.user.name || undefined,
+        status: released ? "SUCCESS" : "FAILED",
+        metadata: { phoneNumber: currentTenant.assignedTwilioNumber, reason: `status_change_to_${status}` },
+      });
+      if (!released) {
+        await queueTwilioCleanup({
+          phoneNumber: currentTenant.assignedTwilioNumber,
           tenantId: id,
           tenantName: currentTenant.name,
-          userId: session.user.id,
-          userName: session.user.name || undefined,
-          status: released ? "SUCCESS" : "FAILED",
-          metadata: { phoneNumber: currentTenant.assignedTwilioNumber, reason: `status_change_to_${status}` },
+          reason: `status_change_to_${status}`,
         });
-        // Queue for retry if the initial release failed
-        if (!released) {
-          await queueTwilioCleanup({
-            phoneNumber: currentTenant.assignedTwilioNumber,
-            tenantId: id,
-            tenantName: currentTenant.name,
-            reason: `status_change_to_${status}`,
-          });
-        }
       }
     }
-
-    const updateData: any = {};
-    if (status) updateData.status = status;
-    if (assignedTwilioNumber !== undefined) {
-      const numberToAssign = normalizePhoneNumber(assignedTwilioNumber);
-      if (numberToAssign) {
-        const existing = await prisma.tenant.findFirst({
-          where: { assignedTwilioNumber: numberToAssign, id: { not: id } },
-        });
-        if (existing) {
-          return NextResponse.json(
-            { success: false, error: `This number is already assigned to "${existing.name}"` },
-            { status: 400 }
-          );
-        }
-      }
-      updateData.assignedTwilioNumber = numberToAssign;
-    }
-
-    const tenant = await prisma.tenant.update({
-      where: { id },
-      data: updateData,
-    });
 
     if (status && currentTenant) {
       await logAdminAction({
@@ -138,10 +145,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { tenantId } = await req.json();
-    if (!tenantId) {
-      return NextResponse.json({ success: false, error: "tenantId is required" }, { status: 400 });
-    }
+    const { tenantId } = deleteTenantSchema.parse(await req.json());
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -186,8 +190,8 @@ export async function DELETE(req: NextRequest) {
       if (tenant.stripeCustomerId) {
         await stripe.customers.del(tenant.stripeCustomerId);
       }
-    } catch (stripeError: any) {
-      console.warn("Stripe cleanup failed (non-blocking):", stripeError.message);
+    } catch (stripeError: unknown) {
+      console.warn("Stripe cleanup failed (non-blocking):", getErrorMessage(stripeError));
     }
 
     await prisma.tenant.delete({ where: { id: tenantId } });
@@ -203,8 +207,8 @@ export async function DELETE(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Tenant delete failed:", error);
-    return NextResponse.json({ success: false, error: error.message || "Delete failed" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "Delete failed" }, { status: 500 });
   }
 }
