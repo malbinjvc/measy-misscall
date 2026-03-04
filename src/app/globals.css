@@ -57,3 +57,8 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes review-marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}

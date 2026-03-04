@@ -1,21 +1,84 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatsCardSkeleton } from "@/components/shared/loading";
 import {
-  PhoneCall,
   PhoneMissed,
   Calendar,
   Mail,
   PhoneForwarded,
+  DollarSign,
+  Clock,
+  XCircle,
+  UserX,
 } from "lucide-react";
 
+type Preset = "today" | "this_week" | "this_month" | "last_month" | "this_year" | "all_time";
+
+const PRESETS: { key: Preset; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "this_week", label: "This Week" },
+  { key: "this_month", label: "This Month" },
+  { key: "last_month", label: "Last Month" },
+  { key: "this_year", label: "This Year" },
+  { key: "all_time", label: "All Time" },
+];
+
+// Format a Date in Toronto timezone as YYYY-MM-DD
+function toTorontoDate(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
+}
+
+function getDateRange(preset: Preset): { from: string; to: string } | null {
+  const now = new Date();
+  const todayStr = toTorontoDate(now);
+  const [y, m, d] = todayStr.split("-").map(Number);
+
+  switch (preset) {
+    case "today":
+      return { from: todayStr, to: todayStr };
+    case "this_week": {
+      // Monday to Sunday of current week
+      const todayDate = new Date(y, m - 1, d);
+      const day = todayDate.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      const monday = new Date(y, m - 1, d - diff);
+      const sunday = new Date(y, m - 1, d - diff + 6);
+      return { from: toTorontoDate(monday), to: toTorontoDate(sunday) };
+    }
+    case "this_month": {
+      // Full month: 1st to last day
+      const lastDay = new Date(y, m, 0); // day 0 of next month = last day of this month
+      return { from: `${y}-${String(m).padStart(2, "0")}-01`, to: toTorontoDate(lastDay) };
+    }
+    case "last_month": {
+      const lmStart = new Date(y, m - 2, 1);
+      const lmEnd = new Date(y, m - 1, 0);
+      return { from: toTorontoDate(lmStart), to: toTorontoDate(lmEnd) };
+    }
+    case "this_year":
+      return { from: `${y}-01-01`, to: `${y}-12-31` };
+    case "all_time":
+      return null;
+  }
+}
+
 export default function DashboardPage() {
+  const [preset, setPreset] = useState<Preset>("this_week");
+  const range = useMemo(() => getDateRange(preset), [preset]);
+
   const { data: stats, isLoading } = useQuery({
-    queryKey: ["dashboard-stats"],
+    queryKey: ["dashboard-stats", preset],
     queryFn: async () => {
-      const res = await fetch("/api/dashboard/stats");
+      const params = new URLSearchParams();
+      if (range) {
+        params.set("from", range.from);
+        params.set("to", range.to);
+      }
+      const url = `/api/dashboard/stats${params.toString() ? `?${params}` : ""}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch stats");
       const json = await res.json();
       return json.data;
@@ -24,46 +87,51 @@ export default function DashboardPage() {
     refetchOnWindowFocus: true,
   });
 
-  if (isLoading) {
-    return (
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight mb-6">Dashboard</h1>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <StatsCardSkeleton key={i} />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   const callbackCount = stats?.callbackRequests ?? 0;
   const hasCallbacks = callbackCount > 0;
 
   const statCards = [
     {
-      title: "Total Calls",
-      value: stats?.totalCalls ?? 0,
-      icon: PhoneCall,
-      color: "text-blue-600",
+      title: "Processing Appointments",
+      value: stats?.pendingAppointments ?? 0,
+      icon: Clock,
+      color: "text-green-600",
     },
     {
-      title: "Missed Calls",
-      value: stats?.missedCalls ?? 0,
-      icon: PhoneMissed,
-      color: "text-red-600",
-    },
-    {
-      title: "Appointments",
+      title: "Total Appointments",
       value: stats?.totalAppointments ?? 0,
       icon: Calendar,
       color: "text-green-600",
     },
     {
-      title: "Pending Appointments",
-      value: stats?.pendingAppointments ?? 0,
-      icon: Calendar,
-      color: "text-yellow-600",
+      title: "Total Revenue",
+      value: `$${(stats?.totalRevenue ?? 0).toFixed(2)}`,
+      icon: DollarSign,
+      color: "text-emerald-600",
+    },
+    {
+      title: "Total Missed Calls",
+      value: stats?.missedCalls ?? 0,
+      icon: PhoneMissed,
+      color: "text-red-600",
+    },
+    {
+      title: "Total Messages",
+      value: stats?.totalSms ?? 0,
+      icon: Mail,
+      color: "text-blue-600",
+    },
+    {
+      title: "Cancelled Appointments",
+      value: stats?.cancelledAppointments ?? 0,
+      icon: XCircle,
+      color: "text-orange-600",
+    },
+    {
+      title: "No Show",
+      value: stats?.noShowAppointments ?? 0,
+      icon: UserX,
+      color: "text-gray-600",
     },
   ];
 
@@ -71,7 +139,24 @@ export default function DashboardPage() {
     <div>
       <h1 className="text-2xl font-bold tracking-tight mb-6">Dashboard</h1>
 
-      {/* Callback Requests — attention catcher */}
+      {/* Date Filter Presets */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {PRESETS.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => setPreset(p.key)}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              preset === p.key
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Callback Requests — always visible, not date-filtered */}
       {hasCallbacks && (
         <div className="mb-6 rounded-lg border-2 border-red-500 bg-red-50 p-4 flex items-center gap-4 animate-pulse-slow">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100">
@@ -88,21 +173,30 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {statCards.map((stat) => (
-          <Card key={stat.title}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {stat.title}
-              </CardTitle>
-              <stat.icon className={`h-4 w-4 ${stat.color}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* Stat Cards */}
+      {isLoading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <StatsCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {statCards.map((stat) => (
+            <Card key={stat.title}>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {stat.title}
+                </CardTitle>
+                <stat.icon className={`h-4 w-4 ${stat.color}`} />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stat.value}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

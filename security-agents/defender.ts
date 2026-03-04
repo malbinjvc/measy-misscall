@@ -123,6 +123,100 @@ const DEFENSE_RULES: DefenseRule[] = [
     category: "DATA_EXPOSURE",
     description: "Error messages sanitized before client response",
   },
+  // 14. XSS - React auto-escaping (JSX expressions are safe by default)
+  {
+    id: "DEF-014",
+    name: "React Auto-Escaping",
+    pattern: /\{[^}]*(?:tenant|data|form|user)\??\.\w+[^}]*\}/,
+    category: "XSS",
+    description: "React JSX auto-escapes dynamic values, preventing XSS",
+    fileFilter: (f) => f.endsWith(".tsx"),
+  },
+  // 15. XSS - Content Security Policy
+  {
+    id: "DEF-015",
+    name: "Content Security Policy",
+    pattern: /Content-Security-Policy/,
+    category: "XSS",
+    description: "CSP header restricts script execution sources",
+  },
+  // 16. IDOR - Tenant-scoped queries
+  {
+    id: "DEF-016",
+    name: "Tenant-Scoped Query",
+    pattern: /where:\s*\{[^}]*tenantId/,
+    category: "IDOR",
+    description: "Database query scoped to authenticated tenant, preventing unauthorized access",
+    fileFilter: isRouteFile,
+  },
+  // 17. IDOR - Session-based tenant extraction
+  {
+    id: "DEF-017",
+    name: "Session Tenant Binding",
+    pattern: /session\.user\.tenantId|session\?\.user\?\.tenantId/,
+    category: "IDOR",
+    description: "Tenant ID derived from authenticated session, not user input",
+    fileFilter: isRouteFile,
+  },
+  // 18. SSRF - URL constructor validation
+  {
+    id: "DEF-018",
+    name: "URL Validation",
+    pattern: /new URL\(|url\.startsWith\(|allowedDomains|URL_ALLOWLIST/,
+    category: "SSRF",
+    description: "URL validated before server-side usage",
+  },
+  // 19. SSRF - Internal-only fetch URLs
+  {
+    id: "DEF-019",
+    name: "Hardcoded Fetch Target",
+    pattern: /fetch\(\s*[`"']https?:\/\/|fetch\(\s*`\$\{(?:process\.env|getBaseUrl)/,
+    category: "SSRF",
+    description: "Server-side fetch targets hardcoded or from env vars, not user input",
+    fileFilter: (f) => !f.endsWith(".tsx"),
+  },
+  // 20. INJECTION - Prisma ORM parameterized queries
+  {
+    id: "DEF-020",
+    name: "Parameterized Queries (Prisma)",
+    pattern: /prisma\.\w+\.(?:findUnique|findFirst|findMany|create|update|delete|upsert)\(/,
+    category: "INJECTION",
+    description: "Prisma ORM auto-parameterizes queries, preventing SQL injection",
+    fileFilter: isRouteFile,
+  },
+  // 21. INJECTION - No raw SQL usage
+  {
+    id: "DEF-021",
+    name: "ORM-Only Data Access",
+    pattern: /from\s+["']@prisma\/client["']|from\s+["']@\/lib\/prisma["']/,
+    category: "INJECTION",
+    description: "Data access through ORM only, no raw SQL queries",
+    fileFilter: isRouteFile,
+  },
+  // 22. CORS - Same-origin enforcement via CSRF check
+  {
+    id: "DEF-022",
+    name: "CSRF Origin Check",
+    pattern: /verifyCsrf|origin.*header|req\.headers\.get\(["']origin["']\)/,
+    category: "CORS",
+    description: "Origin header verified to enforce same-origin policy",
+  },
+  // 23. CORS - SameSite cookie attribute
+  {
+    id: "DEF-023",
+    name: "SameSite Cookie Policy",
+    pattern: /sameSite|SameSite|same-site|httpOnly|HttpOnly/i,
+    category: "CORS",
+    description: "Cookies configured with SameSite attribute to prevent cross-origin abuse",
+  },
+  // 24. PATH_TRAVERSAL - File upload path sanitization
+  {
+    id: "DEF-024",
+    name: "Upload Path Sanitization",
+    pattern: /safeTenantId|safeFilename|replace\(\/\[\\^a-z|path\.join\(.*uploads/i,
+    category: "PATH_TRAVERSAL",
+    description: "File paths sanitized before writing to filesystem",
+  },
 ];
 
 function scanDefenses(files: FileContent[]): Defense[] {

@@ -6,11 +6,11 @@ import { normalizePhoneNumber } from "@/lib/utils";
 import { generateIvrAudio } from "@/lib/elevenlabs";
 import { businessProfileSchema, onboardingStepSchema } from "@/lib/validations";
 import { z, ZodError } from "zod";
+import { getSampleServicesForIndustry } from "@/data/sample-services";
 
 const STEP_ORDER = [
   "BUSINESS_PROFILE",
   "INDUSTRY",
-  "PHONE_SETUP",
   "SUBSCRIPTION",
   "REVIEW",
 ] as const;
@@ -187,38 +187,49 @@ export async function POST(req: NextRequest) {
         });
         const industryData = industrySchema.parse(data);
 
-        await prisma.tenant.update({
-          where: { id: tenantId },
-          data: {
-            industry: industryData.industry,
-            description: industryData.description || null,
-            onboardingStep: "PHONE_SETUP",
-          },
-        });
-        break;
-      }
-
-      case "PHONE_SETUP": {
-        const phoneResult = await prisma.$transaction(async (tx) => {
-          const tenant = await tx.tenant.findUnique({
-            where: { id: tenantId },
-            select: { assignedTwilioNumber: true },
-          });
-          if (!tenant?.assignedTwilioNumber) return { error: "NO_NUMBER" } as const;
-
+        await prisma.$transaction(async (tx) => {
           await tx.tenant.update({
             where: { id: tenantId },
-            data: { onboardingStep: "SUBSCRIPTION" },
+            data: {
+              industry: industryData.industry,
+              description: industryData.description || null,
+              onboardingStep: "SUBSCRIPTION",
+            },
           });
-          return { success: true } as const;
-        });
 
-        if ("error" in phoneResult) {
-          return NextResponse.json(
-            { success: false, error: "Please select and purchase a phone number first" },
-            { status: 400 }
-          );
-        }
+          const existingCount = await tx.service.count({ where: { tenantId } });
+          if (existingCount === 0) {
+            const sampleServices = getSampleServicesForIndustry(industryData.industry);
+            for (let i = 0; i < sampleServices.length; i++) {
+              const s = sampleServices[i];
+              await tx.service.create({
+                data: {
+                  tenantId,
+                  name: s.name,
+                  description: s.description,
+                  duration: s.duration,
+                  price: s.price,
+                  sortOrder: i,
+                  ...(s.options?.length
+                    ? {
+                        options: {
+                          createMany: {
+                            data: s.options.map((o, j) => ({
+                              name: o.name,
+                              description: o.description,
+                              price: o.price,
+                              duration: o.duration,
+                              sortOrder: j,
+                            })),
+                          },
+                        },
+                      }
+                    : {}),
+                },
+              });
+            }
+          }
+        });
         break;
       }
 

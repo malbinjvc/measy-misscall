@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { LoadingPage } from "@/components/shared/loading";
-import { ONBOARDING_STEPS, INDUSTRIES, TenantData, PlanData, AvailableNumber } from "@/types";
+import { ONBOARDING_STEPS, INDUSTRIES, TenantData, PlanData } from "@/types";
 import {
   Check,
   ChevronRight,
@@ -20,7 +20,6 @@ import {
   ShieldCheck,
   AlertCircle,
   CheckCircle2,
-  Phone,
 } from "lucide-react";
 
 interface OnboardingMutationData {
@@ -165,9 +164,6 @@ export default function OnboardingPage() {
       )}
       {tenant?.onboardingStep === "INDUSTRY" && (
         <IndustryStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
-      )}
-      {tenant?.onboardingStep === "PHONE_SETUP" && (
-        <PhoneSetupStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
       )}
       {tenant?.onboardingStep === "SUBSCRIPTION" && (
         <SubscriptionStep tenant={tenant} mutation={mutation} goBack={goBackMutation} />
@@ -486,174 +482,6 @@ function IndustryStep({
   );
 }
 
-// ─── Phone Setup Step ─────────────────────────────────────────────
-
-function PhoneSetupStep({
-  tenant,
-  mutation,
-  goBack,
-}: {
-  tenant: TenantData;
-  mutation: OnboardingMutation;
-  goBack: GoBackMutation;
-}) {
-  const queryClient = useQueryClient();
-
-  // Build location summary from tenant address
-  const locationParts = [tenant?.city, tenant?.state].filter(Boolean);
-  const locationLabel = locationParts.length > 0 ? locationParts.join(", ") : null;
-
-  const {
-    data: availableNumbers,
-    isLoading: searching,
-    error: searchError,
-  } = useQuery<AvailableNumber[]>({
-    queryKey: ["available-numbers"],
-    queryFn: async () => {
-      const res = await fetch("/api/twilio/available-numbers");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Search failed");
-      return json.data;
-    },
-    enabled: !tenant?.assignedTwilioNumber,
-  });
-
-  const purchaseMutation = useMutation({
-    mutationFn: async (phoneNumber: string) => {
-      const res = await fetch("/api/twilio/available-numbers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Purchase failed");
-      return json;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tenant"] });
-    },
-  });
-
-  const hasNumber = !!tenant?.assignedTwilioNumber;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Phone Setup</CardTitle>
-        <CardDescription>
-          {hasNumber
-            ? "Your dedicated phone number is ready"
-            : "Choose a dedicated phone number for your business"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {hasNumber ? (
-          <div className="rounded-lg border border-green-200 bg-green-50 p-4 flex items-center gap-3">
-            <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
-            <div>
-              <p className="font-medium text-green-900">Assigned Number</p>
-              <p className="text-lg font-mono text-green-800">{tenant.assignedTwilioNumber}</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            {locationLabel && (
-              <p className="text-sm text-muted-foreground">
-                Showing numbers near <span className="font-medium text-foreground">{locationLabel}</span> based on your business address.
-              </p>
-            )}
-
-            {searching && (
-              <div className="text-center py-4 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
-                Searching available numbers{locationLabel ? ` near ${locationLabel}` : ""}...
-              </div>
-            )}
-
-            {searchError && (
-              <p className="text-sm text-destructive text-center py-4">
-                {(searchError as Error).message}
-              </p>
-            )}
-
-            {availableNumbers && availableNumbers.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No numbers found in your area. Please contact support for assistance.
-              </p>
-            )}
-
-            {availableNumbers && availableNumbers.length > 0 && (
-              <div className="space-y-2">
-                {availableNumbers.map((n) => (
-                  <div
-                    key={n.phoneNumber}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
-                    <div>
-                      <p className="font-mono font-medium">{n.phoneNumber}</p>
-                      {n.locality && (
-                        <p className="text-xs text-muted-foreground">
-                          {n.locality}
-                          {n.region ? `, ${n.region}` : ""}
-                        </p>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => purchaseMutation.mutate(n.phoneNumber)}
-                      disabled={purchaseMutation.isPending}
-                    >
-                      {purchaseMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Phone className="h-4 w-4 mr-1" /> Select
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {purchaseMutation.isError && (
-              <p className="text-xs text-destructive text-center">
-                {purchaseMutation.error.message}
-              </p>
-            )}
-          </>
-        )}
-
-        <div className="flex gap-3">
-          <Button
-            variant="outline"
-            onClick={() => goBack.mutate()}
-            disabled={goBack.isPending}
-          >
-            {goBack.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ChevronLeft className="h-4 w-4 mr-1" />
-            )}
-            Back
-          </Button>
-          <Button
-            className="flex-1"
-            onClick={() => mutation.mutate({ step: "PHONE_SETUP", data: {} })}
-            disabled={mutation.isPending || !hasNumber}
-          >
-            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Continue
-          </Button>
-        </div>
-        {mutation.isError && (
-          <p className="text-xs text-destructive text-center">{mutation.error.message}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ─── Subscription Step ────────────────────────────────────────────
 
 function SubscriptionStep({
@@ -799,7 +627,9 @@ function ReviewStep({
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Assigned Twilio Number</p>
-            <p className="font-medium">{tenant?.assignedTwilioNumber || "Not set"}</p>
+            <p className="font-medium">
+              {tenant?.assignedTwilioNumber || "Set up in Settings → Phone"}
+            </p>
           </div>
         </div>
 

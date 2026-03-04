@@ -74,11 +74,6 @@ export const ONBOARDING_STEPS: { step: OnboardingStep; label: string; descriptio
     description: "Select your industry",
   },
   {
-    step: "PHONE_SETUP",
-    label: "Phone Setup",
-    description: "Get your dedicated phone number",
-  },
-  {
     step: "SUBSCRIPTION",
     label: "Subscription",
     description: "Choose your plan",
@@ -115,8 +110,12 @@ export interface TenantData {
   ivrCallbackMessage: string | null;
   ivrAudioUrl: string | null;
   stripeCustomerId: string | null;
+  autoConfirmAppointments: boolean;
+  facebookUrl: string | null;
+  instagramUrl: string | null;
   heroMediaUrl: string | null;
   heroMediaType: string | null;
+  websiteConfig: WebsiteConfig | null;
   services: ServiceData[];
   businessHours: BusinessHoursData[];
   subscription: SubscriptionData | null;
@@ -189,6 +188,229 @@ export interface PlanData {
   features: string[];
   isActive: boolean;
   sortOrder: number;
+}
+
+// ─── Website Builder Types ──────────────────────────────
+
+export const GOOGLE_FONTS = [
+  "Inter",
+  "Roboto",
+  "Open Sans",
+  "Montserrat",
+  "Playfair Display",
+  "Lora",
+  "Poppins",
+  "Raleway",
+  "Oswald",
+  "Merriweather",
+] as const;
+
+export type GoogleFont = (typeof GOOGLE_FONTS)[number];
+
+export interface TextShadowConfig {
+  enabled: boolean;
+  x: number;
+  y: number;
+  blur: number;
+  color: string;
+}
+
+export interface TextGradientConfig {
+  enabled: boolean;
+  from: string;
+  to: string;
+  direction: string; // e.g. "to right", "to bottom"
+}
+
+export interface TextConfig {
+  content: string;
+  fontFamily: string;
+  fontSize: number; // px
+  fontWeight: number;
+  color: string;
+  alignment: "left" | "center" | "right";
+  letterSpacing: number;
+  lineHeight: number;
+  textShadow?: TextShadowConfig;
+  gradient?: TextGradientConfig;
+}
+
+export interface CtaConfig {
+  enabled: boolean;
+  text: string;
+  url: string;
+}
+
+export interface OverlayConfig {
+  color: string;
+  opacity: number; // 0 to 1
+}
+
+export interface WebsiteTheme {
+  primaryColor: string;
+  secondaryColor: string;
+  fontFamily: string;
+  backgroundColor: string;
+}
+
+export interface NavBarConfig {
+  logoUrl: string | null;
+  logoType: "image" | "gif" | "video";
+  logoHeight: number; // px
+  showName: boolean;
+}
+
+export interface HeroSectionConfig {
+  type: "hero";
+  id: string;
+  visible: boolean;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfig;
+  subtitle: TextConfig;
+  cta: CtaConfig;
+  overlay: OverlayConfig;
+  minHeight: number; // vh
+}
+
+export interface ReviewsSectionConfig {
+  type: "reviews";
+  id: string;
+  visible: boolean;
+  title: TextConfig;
+}
+
+export interface ServicesSectionConfig {
+  type: "services";
+  id: string;
+  visible: boolean;
+  title: TextConfig;
+}
+
+export interface AboutSectionConfig {
+  type: "about";
+  id: string;
+  visible: boolean;
+  title: TextConfig;
+  body: TextConfig;
+}
+
+export interface TextBlockSectionConfig {
+  type: "text-block";
+  id: string;
+  visible: boolean;
+  title: TextConfig;
+  body: TextConfig;
+  backgroundColor: string;
+  padding: number; // px
+}
+
+export interface MediaBlockSectionConfig {
+  type: "media-block";
+  id: string;
+  visible: boolean;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  caption: TextConfig;
+  aspectRatio: "16/9" | "4/3" | "1/1" | "auto";
+}
+
+export interface TextOverMediaSectionConfig {
+  type: "text-over-media";
+  id: string;
+  visible: boolean;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfig;
+  subtitle: TextConfig;
+  cta: CtaConfig;
+  overlay: OverlayConfig;
+  minHeight: number; // vh
+}
+
+// ─── Element Types (live inside custom sections) ─────
+
+export interface TextElement {
+  type: "text";
+  id: string;
+  title: TextConfig;
+  body: TextConfig;
+}
+
+export interface MediaElement {
+  type: "media";
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  caption: TextConfig;
+  aspectRatio: "16/9" | "4/3" | "1/1" | "auto";
+}
+
+export interface TextOverMediaElement {
+  type: "text-over-media";
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfig;
+  subtitle: TextConfig;
+  cta: CtaConfig;
+  overlay: OverlayConfig;
+  minHeight: number; // vh
+}
+
+export type SectionElement = TextElement | MediaElement | TextOverMediaElement;
+
+// ─── Custom Section Config ──────────────────────────
+
+export interface CustomSectionConfig {
+  type: "custom";
+  id: string;
+  visible: boolean;
+  name: string;
+  backgroundColor: string;
+  padding: number; // px
+  elements: SectionElement[];
+}
+
+// ─── Section Union ──────────────────────────────────
+
+export type WebsiteSectionConfig =
+  | HeroSectionConfig
+  | ReviewsSectionConfig
+  | ServicesSectionConfig
+  | CustomSectionConfig;
+
+export interface WebsiteConfig {
+  theme: WebsiteTheme;
+  navBar?: NavBarConfig;
+  sections: WebsiteSectionConfig[];
+}
+
+export interface AppointmentItemData {
+  id: string;
+  serviceId: string;
+  service: ServiceData;
+  serviceOptionId: string | null;
+  serviceOption: ServiceOptionData | null;
+  quantity: number;
+  selectedSubOptions: string[];
+  sortOrder: number;
+}
+
+export interface CustomerData {
+  id: string;
+  tenantId: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  smsConsent: boolean;
+  vehicleYear: string | null;
+  vehicleMake: string | null;
+  vehicleModel: string | null;
+  vehicleType: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AvailableNumber {

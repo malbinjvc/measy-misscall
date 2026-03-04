@@ -33,7 +33,10 @@ export const businessProfileSchema = z.object({
   state: z.string().optional(),
   zipCode: z.string().optional(),
   description: z.string().optional(),
+  facebookUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
+  instagramUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
   businessPhoneNumber: z.string().min(10, "Business phone number is required"),
+  autoConfirmAppointments: z.boolean().optional(),
 });
 
 export const serviceSchema = z.object({
@@ -46,8 +49,18 @@ export const serviceSchema = z.object({
 
 // ─── Appointments ────────────────────────────────────
 
-export const createAppointmentSchema = z.object({
+export const appointmentItemSchema = z.object({
   serviceId: z.string().min(1, "Service is required"),
+  serviceOptionId: z.string().optional(),
+  quantity: z.number().int().min(1).optional(),
+  selectedSubOptionIds: z.array(z.string()).optional(),
+});
+
+export const createAppointmentSchema = z.object({
+  // Multi-item array (preferred)
+  items: z.array(appointmentItemSchema).min(1).optional(),
+  // Legacy single-service fields (fallback)
+  serviceId: z.string().min(1, "Service is required").optional(),
   serviceOptionId: z.string().optional(),
   quantity: z.number().int().min(1).optional(),
   selectedSubOptionIds: z.array(z.string()).optional(),
@@ -58,13 +71,26 @@ export const createAppointmentSchema = z.object({
   startTime: z.string().min(1, "Time is required"),
   notes: z.string().optional(),
   verificationCode: z.string().length(6, "Verification code must be 6 digits").optional(),
-});
+  vehicleYear: z.string().optional(),
+  vehicleType: z.string().optional(),
+  vehicleMake: z.string().optional(),
+  vehicleModel: z.string().optional(),
+  appointmentPreference: z.enum(["DROP_OFF", "WAIT_FOR_IT", "PICKUP_DROPOFF"]).optional(),
+}).refine(
+  (data) => data.items?.length || data.serviceId,
+  { message: "Either items array or serviceId is required", path: ["serviceId"] }
+);
 
 export const updateAppointmentSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]).optional(),
   notes: z.string().optional(),
   date: z.string().optional(),
   startTime: z.string().optional(),
+  vehicleYear: z.string().optional(),
+  vehicleType: z.string().optional(),
+  vehicleMake: z.string().optional(),
+  vehicleModel: z.string().optional(),
+  appointmentPreference: z.enum(["DROP_OFF", "WAIT_FOR_IT", "PICKUP_DROPOFF"]).optional(),
 });
 
 // ─── Service Sub-Options ─────────────────────────────
@@ -227,6 +253,213 @@ export const checkoutSchema = z.object({
 
 export const purchaseNumberSchema = z.object({
   phoneNumber: z.string().min(10, "Phone number is required"),
+});
+
+// ─── Customer Profile ────────────────────────────────
+
+export const updateCustomerSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters").max(100).optional(),
+  email: z.string().email("Invalid email").optional().or(z.literal("")),
+  smsConsent: z.boolean().optional(),
+});
+
+export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
+
+// ─── Website Builder ─────────────────────────────────
+
+const textShadowConfigSchema = z.object({
+  enabled: z.boolean(),
+  x: z.number(),
+  y: z.number(),
+  blur: z.number().min(0),
+  color: z.string(),
+});
+
+const textGradientConfigSchema = z.object({
+  enabled: z.boolean(),
+  from: z.string(),
+  to: z.string(),
+  direction: z.string(),
+});
+
+const textConfigSchema = z.object({
+  content: z.string().max(5000),
+  fontFamily: z.string(),
+  fontSize: z.number().min(8).max(200),
+  fontWeight: z.number().min(100).max(900),
+  color: z.string(),
+  alignment: z.enum(["left", "center", "right"]),
+  letterSpacing: z.number(),
+  lineHeight: z.number().min(0.5).max(4),
+  textShadow: textShadowConfigSchema.optional(),
+  gradient: textGradientConfigSchema.optional(),
+});
+
+const ctaConfigSchema = z.object({
+  enabled: z.boolean(),
+  text: z.string().max(100),
+  url: z.string().max(500),
+});
+
+const overlayConfigSchema = z.object({
+  color: z.string(),
+  opacity: z.number().min(0).max(1),
+});
+
+const themeSchema = z.object({
+  primaryColor: z.string(),
+  secondaryColor: z.string(),
+  fontFamily: z.string(),
+  backgroundColor: z.string(),
+});
+
+const navBarSchema = z.object({
+  logoUrl: z.string().nullable(),
+  logoType: z.enum(["image", "gif", "video"]),
+  logoHeight: z.number().min(16).max(120),
+  showName: z.boolean(),
+});
+
+const heroSectionSchema = z.object({
+  type: z.literal("hero"),
+  id: z.string(),
+  visible: z.boolean(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  headline: textConfigSchema,
+  subtitle: textConfigSchema,
+  cta: ctaConfigSchema,
+  overlay: overlayConfigSchema,
+  minHeight: z.number().min(20).max(100),
+});
+
+const reviewsSectionSchema = z.object({
+  type: z.literal("reviews"),
+  id: z.string(),
+  visible: z.boolean(),
+  title: textConfigSchema,
+});
+
+const servicesSectionSchema = z.object({
+  type: z.literal("services"),
+  id: z.string(),
+  visible: z.boolean(),
+  title: textConfigSchema,
+});
+
+const aboutSectionSchema = z.object({
+  type: z.literal("about"),
+  id: z.string(),
+  visible: z.boolean(),
+  title: textConfigSchema,
+  body: textConfigSchema,
+});
+
+const textBlockSectionSchema = z.object({
+  type: z.literal("text-block"),
+  id: z.string(),
+  visible: z.boolean(),
+  title: textConfigSchema,
+  body: textConfigSchema,
+  backgroundColor: z.string(),
+  padding: z.number().min(0).max(200),
+});
+
+const mediaBlockSectionSchema = z.object({
+  type: z.literal("media-block"),
+  id: z.string(),
+  visible: z.boolean(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  caption: textConfigSchema,
+  aspectRatio: z.enum(["16/9", "4/3", "1/1", "auto"]),
+});
+
+const textOverMediaSectionSchema = z.object({
+  type: z.literal("text-over-media"),
+  id: z.string(),
+  visible: z.boolean(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  headline: textConfigSchema,
+  subtitle: textConfigSchema,
+  cta: ctaConfigSchema,
+  overlay: overlayConfigSchema,
+  minHeight: z.number().min(20).max(100),
+});
+
+// ─── Element Schemas ────────────────────────────────
+
+const textElementSchema = z.object({
+  type: z.literal("text"),
+  id: z.string(),
+  title: textConfigSchema,
+  body: textConfigSchema,
+});
+
+const mediaElementSchema = z.object({
+  type: z.literal("media"),
+  id: z.string(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  caption: textConfigSchema,
+  aspectRatio: z.enum(["16/9", "4/3", "1/1", "auto"]),
+});
+
+const textOverMediaElementSchema = z.object({
+  type: z.literal("text-over-media"),
+  id: z.string(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  headline: textConfigSchema,
+  subtitle: textConfigSchema,
+  cta: ctaConfigSchema,
+  overlay: overlayConfigSchema,
+  minHeight: z.number().min(20).max(100),
+});
+
+const sectionElementSchema = z.discriminatedUnion("type", [
+  textElementSchema,
+  mediaElementSchema,
+  textOverMediaElementSchema,
+]);
+
+const customSectionSchema = z.object({
+  type: z.literal("custom"),
+  id: z.string(),
+  visible: z.boolean(),
+  name: z.string().max(100),
+  backgroundColor: z.string(),
+  padding: z.number().min(0).max(200),
+  elements: z.array(sectionElementSchema).max(20),
+});
+
+// ─── Section Union (current) ────────────────────────
+
+const websiteSectionSchema = z.discriminatedUnion("type", [
+  heroSectionSchema,
+  reviewsSectionSchema,
+  servicesSectionSchema,
+  customSectionSchema,
+]);
+
+// ─── Legacy section schemas (for migration support) ─
+
+const legacySectionSchema = z.discriminatedUnion("type", [
+  heroSectionSchema,
+  reviewsSectionSchema,
+  servicesSectionSchema,
+  aboutSectionSchema,
+  textBlockSectionSchema,
+  mediaBlockSectionSchema,
+  textOverMediaSectionSchema,
+  customSectionSchema,
+]);
+
+export const websiteConfigSchema = z.object({
+  theme: themeSchema,
+  navBar: navBarSchema.optional(),
+  sections: z.array(legacySectionSchema).max(20),
 });
 
 // ─── Type exports ────────────────────────────────────

@@ -239,6 +239,128 @@ const ATTACK_RULES: ScanRule[] = [
     category: "CORS",
     description: "Wildcard CORS policy allows requests from any origin",
   },
+  // 16. XSS via dangerouslySetInnerHTML
+  {
+    id: "ATK-016",
+    name: "Dangerous HTML Injection",
+    pattern: /dangerouslySetInnerHTML/,
+    severity: "HIGH",
+    category: "XSS",
+    description: "React dangerouslySetInnerHTML bypasses XSS protection",
+  },
+  // 17. XSS via unescaped user content in href/src
+  {
+    id: "ATK-017",
+    name: "Unvalidated URL in href/src",
+    pattern: /href=\{[^}]*(?:user|input|query|param|data\.|body\.)|src=\{[^}]*(?:user|input|query|param)/i,
+    severity: "MEDIUM",
+    category: "XSS",
+    description: "User-controlled value in href or src attribute without validation",
+    fileFilter: (f) => f.endsWith(".tsx"),
+    contextCheck: (lines, idx) => {
+      const line = lines[idx];
+      return !line.includes("sanitize") && !line.includes("encodeURI");
+    },
+  },
+  // 18. IDOR - Direct object access without tenant scoping
+  {
+    id: "ATK-018",
+    name: "Missing Tenant Scope",
+    pattern: /findUnique\(\s*\{\s*where:\s*\{\s*id:/,
+    severity: "HIGH",
+    category: "IDOR",
+    description: "Direct object lookup by ID without tenant ownership verification",
+    fileFilter: isRouteFile,
+    contextCheck: (lines, idx) => {
+      const nearby = linesNearby(lines, idx, 5);
+      // Flag if the where clause doesn't include tenantId
+      return !nearby.includes("tenantId") && !nearby.includes("tenant_id") &&
+             !nearby.includes("session.user.tenantId");
+    },
+  },
+  // 19. IDOR - Route params used directly for data access
+  {
+    id: "ATK-019",
+    name: "Unverified Resource Access",
+    pattern: /params\.\w+.*(?:findUnique|findFirst|delete|update)\(/,
+    severity: "HIGH",
+    category: "IDOR",
+    description: "URL parameter used directly for database access without ownership check",
+    fileFilter: isRouteFile,
+    contextCheck: (lines, idx) => {
+      const nearby = linesNearby(lines, idx, 10);
+      return !nearby.includes("tenantId");
+    },
+  },
+  // 20. SSRF via user-controlled fetch URL
+  {
+    id: "ATK-020",
+    name: "User-Controlled Fetch URL",
+    pattern: /fetch\(\s*(?:url|data\.|body\.|req\.|input|userUrl)/,
+    severity: "HIGH",
+    category: "SSRF",
+    description: "Server-side fetch with user-controlled URL",
+    fileFilter: (f) => !f.endsWith(".tsx") && !f.includes("node_modules"),
+    contextCheck: (lines, idx) => {
+      const nearby = linesNearby(lines, idx, 5);
+      return !nearby.includes("allowedDomains") && !nearby.includes("allowedUrls") &&
+             !nearby.includes("URL_ALLOWLIST");
+    },
+  },
+  // 21. SSRF via user-controlled redirect
+  {
+    id: "ATK-021",
+    name: "Unvalidated Server Redirect",
+    pattern: /(?:heroMediaUrl|imageUrl|logoUrl|audioUrl|url)\s*[:=].*(?:data\.|body\.|req\.)/,
+    severity: "MEDIUM",
+    category: "SSRF",
+    description: "User-supplied URL stored and later fetched server-side",
+    fileFilter: isRouteFile,
+    contextCheck: (lines, idx) => {
+      const nearby = linesNearby(lines, idx, 5);
+      return !nearby.includes("validateUrl") && !nearby.includes("URL_ALLOWLIST") &&
+             !nearby.includes("new URL(");
+    },
+  },
+  // 22. Path traversal via file upload name
+  {
+    id: "ATK-022",
+    name: "Unsanitized Filename",
+    pattern: /file\.name|originalFilename|originalname/,
+    severity: "HIGH",
+    category: "PATH_TRAVERSAL",
+    description: "User-uploaded filename used without path sanitization",
+    contextCheck: (lines, idx) => {
+      const nearby = linesNearby(lines, idx, 8);
+      return !nearby.includes("path.basename") && !nearby.includes("replace(/[^a-zA-Z0-9") &&
+             !nearby.includes("sanitize");
+    },
+  },
+  // 23. NoSQL injection via dynamic query construction
+  {
+    id: "ATK-023",
+    name: "Dynamic Query Construction",
+    pattern: /\$queryRawUnsafe|\$executeRawUnsafe|where:\s*\{.*\[.*\]/,
+    severity: "CRITICAL",
+    category: "INJECTION",
+    description: "Dynamic query construction with potential for injection",
+  },
+  // 24. CORS - Missing origin validation on API routes
+  {
+    id: "ATK-024",
+    name: "No Origin Validation",
+    pattern: /export\s+async\s+function\s+(POST|PUT|DELETE|PATCH)/,
+    severity: "MEDIUM",
+    category: "CORS",
+    description: "State-changing public endpoint without origin validation",
+    fileFilter: isPublicRoute,
+    contextCheck: (lines) => {
+      const content = lines.join("\n");
+      return !content.includes("origin") && !content.includes("Origin") &&
+             !content.includes("cors") && !content.includes("CORS") &&
+             !content.includes("referer") && !content.includes("Referer");
+    },
+  },
 ];
 
 function main() {

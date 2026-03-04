@@ -46,6 +46,12 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum AppointmentPreference {
+  DROP_OFF
+  WAIT_FOR_IT
+  PICKUP_DROPOFF
+}
+
 enum SmsStatus {
   QUEUED
   SENT
@@ -84,7 +90,6 @@ enum DayOfWeek {
 enum OnboardingStep {
   BUSINESS_PROFILE
   INDUSTRY
-  PHONE_SETUP
   SUBSCRIPTION
   REVIEW
 }
@@ -137,9 +142,19 @@ model Tenant {
   // Stripe
   stripeCustomerId    String?        @unique
 
+  // Appointment Settings
+  autoConfirmAppointments Boolean @default(false)
+
+  // Social Media
+  facebookUrl         String?
+  instagramUrl        String?
+
   // Hero Media
   heroMediaUrl        String?
   heroMediaType       String?        @default("image") // "image" or "video"
+
+  // Website Builder
+  websiteConfig       Json?
 
   // Relations
   users               User[]
@@ -150,6 +165,7 @@ model Tenant {
   businessHours       BusinessHours[]
   subscription        Subscription?
   reviews             Review[]
+  customers           Customer[]
 
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -159,40 +175,42 @@ model Tenant {
 }
 
 model Service {
-  id            String          @id @default(cuid())
-  name          String
-  description   String?
-  duration      Int             @default(60) // in minutes
-  price         Decimal?    @db.Decimal(10, 2)
-  isActive      Boolean         @default(true)
-  sortOrder     Int             @default(0)
-  tenantId      String
-  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  appointments  Appointment[]
-  options       ServiceOption[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id               String            @id @default(cuid())
+  name             String
+  description      String?
+  duration         Int               @default(60) // in minutes
+  price            Decimal?          @db.Decimal(10, 2)
+  isActive         Boolean           @default(true)
+  sortOrder        Int               @default(0)
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appointments     Appointment[]
+  appointmentItems AppointmentItem[]
+  options          ServiceOption[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   @@index([tenantId])
 }
 
 model ServiceOption {
-  id              String             @id @default(cuid())
-  name            String
-  description     String?
-  duration        Int?               // Override parent service duration (optional)
-  price           Decimal?           @db.Decimal(10, 2) // Override parent service price (optional)
-  isActive        Boolean            @default(true)
-  sortOrder       Int                @default(0)
-  defaultQuantity Int                @default(1)
-  minQuantity     Int                @default(1)
-  maxQuantity     Int                @default(10)
-  serviceId       String
-  service         Service            @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  appointments    Appointment[]
-  subOptions      ServiceSubOption[]
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  id               String             @id @default(cuid())
+  name             String
+  description      String?
+  duration         Int?               // Override parent service duration (optional)
+  price            Decimal?           @db.Decimal(10, 2) // Override parent service price (optional)
+  isActive         Boolean            @default(true)
+  sortOrder        Int                @default(0)
+  defaultQuantity  Int                @default(1)
+  minQuantity      Int                @default(1)
+  maxQuantity      Int                @default(10)
+  serviceId        String
+  service          Service            @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  appointments     Appointment[]
+  appointmentItems AppointmentItem[]
+  subOptions       ServiceSubOption[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@index([serviceId])
 }
@@ -240,12 +258,13 @@ model Appointment {
   id              String            @id @default(cuid())
   tenantId        String
   tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  serviceId       String
-  service         Service           @relation(fields: [serviceId], references: [id])
+  serviceId       String?
+  service         Service?          @relation(fields: [serviceId], references: [id])
   serviceOptionId    String?
   serviceOption      ServiceOption?    @relation(fields: [serviceOptionId], references: [id])
   quantity           Int               @default(1)
   selectedSubOptions String[]          // Array of ServiceSubOption IDs
+  items              AppointmentItem[]
   customerName       String
   customerPhone   String
   customerEmail   String?
@@ -254,6 +273,12 @@ model Appointment {
   endTime         String            // "10:00"
   status          AppointmentStatus @default(PENDING)
   notes           String?
+  vehicleYear    String?
+  vehicleType    String?
+  vehicleMake    String?
+  vehicleModel   String?
+  appointmentPreference  AppointmentPreference?
+  smsConsent      Boolean           @default(false)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
@@ -261,6 +286,23 @@ model Appointment {
   @@index([date])
   @@index([status])
   @@index([customerPhone])
+}
+
+model AppointmentItem {
+  id                 String         @id @default(cuid())
+  appointmentId      String
+  appointment        Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  serviceId          String
+  service            Service        @relation(fields: [serviceId], references: [id])
+  serviceOptionId    String?
+  serviceOption      ServiceOption? @relation(fields: [serviceOptionId], references: [id])
+  quantity           Int            @default(1)
+  selectedSubOptions String[]
+  sortOrder          Int            @default(0)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([appointmentId])
 }
 
 model SmsLog {
@@ -405,6 +447,43 @@ model TwilioCleanupQueue {
   updatedAt    DateTime @updatedAt
 
   @@index([status, nextRetryAt])
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  phone        String
+  email        String?
+  smsConsent   Boolean  @default(false)
+  vehicleYear  String?
+  vehicleMake  String?
+  vehicleModel String?
+  vehicleType  String?
+  notes        String?
+  vehicles     CustomerVehicle[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@index([phone])
+}
+
+model CustomerVehicle {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vehicleYear  String
+  vehicleType  String?
+  vehicleMake  String
+  vehicleModel String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([customerId, vehicleYear, vehicleMake, vehicleModel])
+  @@index([customerId])
 }
 
 model AdminLog {

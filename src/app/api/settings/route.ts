@@ -4,7 +4,9 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
 import { normalizePhoneNumber } from "@/lib/utils";
-import { businessProfileSchema, businessHoursSchema } from "@/lib/validations";
+import { generateIvrAudio } from "@/lib/elevenlabs";
+import { businessProfileSchema, businessHoursSchema, websiteConfigSchema } from "@/lib/validations";
+import { migrateConfig } from "@/components/website-builder/migrate";
 import { ZodError } from "zod";
 
 interface BusinessHoursInput {
@@ -35,18 +37,17 @@ export async function PATCH(req: NextRequest) {
 
         // Atomically check slug uniqueness and update in a transaction
         const profileResult = await prisma.$transaction(async (tx) => {
-          if (profileData.slug) {
-            const currentTenant = await tx.tenant.findUnique({
-              where: { id: tenantId },
-              select: { slug: true },
+          const currentTenant = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { slug: true, name: true },
+          });
+
+          if (profileData.slug && profileData.slug !== currentTenant?.slug) {
+            const existingSlug = await tx.tenant.findFirst({
+              where: { slug: profileData.slug, id: { not: tenantId } },
             });
-            if (profileData.slug !== currentTenant?.slug) {
-              const existingSlug = await tx.tenant.findFirst({
-                where: { slug: profileData.slug, id: { not: tenantId } },
-              });
-              if (existingSlug) {
-                return { slugTaken: true } as const;
-              }
+            if (existingSlug) {
+              return { slugTaken: true, nameChanged: false } as const;
             }
           }
 
@@ -62,12 +63,35 @@ export async function PATCH(req: NextRequest) {
               state: profileData.state || null,
               zipCode: profileData.zipCode || null,
               description: profileData.description || null,
+              facebookUrl: profileData.facebookUrl || null,
+              instagramUrl: profileData.instagramUrl || null,
+              ...(profileData.autoConfirmAppointments !== undefined && {
+                autoConfirmAppointments: profileData.autoConfirmAppointments,
+              }),
             },
           });
-          return { slugTaken: false } as const;
+
+          const nameChanged = profileData.name !== undefined && profileData.name !== currentTenant?.name;
+          return { slugTaken: false, nameChanged } as const;
         });
         if (profileResult.slugTaken) {
           return NextResponse.json({ success: false, error: "Slug already taken" }, { status: 400 });
+        }
+
+        // Regenerate IVR audio when business name changes (fire-and-forget)
+        if (profileResult.nameChanged && profileData.name) {
+          generateIvrAudio(profileData.name, tenantId)
+            .then(async (audioUrl) => {
+              if (audioUrl) {
+                await prisma.tenant.update({
+                  where: { id: tenantId },
+                  data: { ivrAudioUrl: audioUrl },
+                });
+              }
+            })
+            .catch((err) => {
+              console.warn("IVR audio regeneration after name change failed (non-blocking):", err);
+            });
         }
         break;
       }
@@ -150,6 +174,38 @@ export async function PATCH(req: NextRequest) {
           data: {
             heroMediaUrl: data.heroMediaUrl || null,
             heroMediaType: data.heroMediaType || "image",
+          },
+        });
+        break;
+      }
+
+      case "website": {
+        // Guard: reject payloads larger than 500KB
+        const jsonStr = JSON.stringify(data.config);
+        if (jsonStr.length > 500 * 1024) {
+          return NextResponse.json(
+            { success: false, error: "Website configuration is too large (max 500KB)" },
+            { status: 400 }
+          );
+        }
+
+        // Migrate legacy section types before validation
+        const migratedConfig = migrateConfig(data.config);
+        const websiteConfig = websiteConfigSchema.parse(migratedConfig);
+
+        // Sync heroMediaUrl/heroMediaType from hero section for backward compat
+        const heroSection = websiteConfig.sections.find((s) => s.type === "hero");
+        const heroUpdate: Record<string, unknown> = {};
+        if (heroSection && heroSection.type === "hero") {
+          heroUpdate.heroMediaUrl = heroSection.mediaUrl || null;
+          heroUpdate.heroMediaType = heroSection.mediaType || "image";
+        }
+
+        await prisma.tenant.update({
+          where: { id: tenantId },
+          data: {
+            websiteConfig: JSON.parse(JSON.stringify(websiteConfig)),
+            ...heroUpdate,
           },
         });
         break;

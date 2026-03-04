@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
-import type { TenantData } from "@/types";
+import type { TenantData, AvailableNumber } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw } from "lucide-react";
+import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw, CheckCircle2 } from "lucide-react";
+import { WebsiteBuilder } from "@/components/website-builder";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
@@ -54,7 +55,7 @@ export default function SettingsPage() {
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="hours">Business Hours</TabsTrigger>
           <TabsTrigger value="twilio">Phone</TabsTrigger>
-          <TabsTrigger value="media">Media</TabsTrigger>
+          <TabsTrigger value="website">Website</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
@@ -66,8 +67,8 @@ export default function SettingsPage() {
         <TabsContent value="twilio">
           <PhoneSettings tenant={tenant} mutation={updateMutation} />
         </TabsContent>
-        <TabsContent value="media">
-          <MediaSettings tenant={tenant} mutation={updateMutation} />
+        <TabsContent value="website">
+          <WebsiteBuilder tenant={tenant} mutation={updateMutation} />
         </TabsContent>
       </Tabs>
     </div>
@@ -76,7 +77,15 @@ export default function SettingsPage() {
 
 type SettingsMutation = UseMutationResult<unknown, Error, Record<string, unknown>>;
 
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [form, setForm] = useState({
     name: tenant?.name || "",
     slug: tenant?.slug || "",
@@ -87,7 +96,18 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
     state: tenant?.state || "",
     zipCode: tenant?.zipCode || "",
     description: tenant?.description || "",
+    autoConfirmAppointments: tenant?.autoConfirmAppointments || false,
+    facebookUrl: tenant?.facebookUrl || "",
+    instagramUrl: tenant?.instagramUrl || "",
   });
+
+  const handleNameChange = (newName: string) => {
+    const updated: typeof form = { ...form, name: newName };
+    if (!slugManuallyEdited) {
+      updated.slug = generateSlug(newName);
+    }
+    setForm(updated);
+  };
 
   return (
     <Card className="mt-4">
@@ -99,11 +119,11 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Business Name</Label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Input value={form.name} onChange={(e) => handleNameChange(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label>URL Slug</Label>
-            <Input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+            <Input value={form.slug} onChange={(e) => { setSlugManuallyEdited(true); setForm({ ...form, slug: e.target.value }); }} />
           </div>
         </div>
         <div className="grid sm:grid-cols-2 gap-4">
@@ -137,6 +157,28 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
         <div className="space-y-2">
           <Label>Description</Label>
           <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </div>
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="space-y-0.5">
+            <Label>Auto-confirm appointments</Label>
+            <p className="text-sm text-muted-foreground">
+              Automatically confirm new appointments instead of leaving them as pending.
+            </p>
+          </div>
+          <Switch
+            checked={form.autoConfirmAppointments}
+            onCheckedChange={(checked) => setForm({ ...form, autoConfirmAppointments: checked })}
+          />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Facebook URL</Label>
+            <Input placeholder="https://facebook.com/yourbusiness" value={form.facebookUrl} onChange={(e) => setForm({ ...form, facebookUrl: e.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <Label>Instagram URL</Label>
+            <Input placeholder="https://instagram.com/yourbusiness" value={form.instagramUrl} onChange={(e) => setForm({ ...form, instagramUrl: e.target.value })} />
+          </div>
         </div>
         <Button onClick={() => mutation.mutate({ section: "profile", ...form })} disabled={mutation.isPending}>
           {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -249,16 +291,18 @@ function PhoneSettings({ tenant, mutation }: { tenant: TenantData; mutation: Set
         <CardDescription>Manage your phone settings and IVR messages</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Assigned Twilio Number - read only */}
-        <div className="rounded-lg border p-4 bg-muted/50">
-          <Label className="text-xs text-muted-foreground">Assigned Twilio Number</Label>
-          <div className="flex items-center gap-2 mt-1">
-            <Phone className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">
-              {tenant?.assignedTwilioNumber || "Not yet assigned — contact your admin"}
-            </span>
+        {/* Assigned Twilio Number */}
+        {tenant?.assignedTwilioNumber ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4 flex items-center gap-3">
+            <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
+            <div>
+              <p className="font-medium text-green-900">Assigned Number</p>
+              <p className="text-lg font-mono text-green-800">{tenant.assignedTwilioNumber}</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <TwilioNumberSetup tenant={tenant} />
+        )}
 
         {/* Call forwarding instructions */}
         {tenant?.assignedTwilioNumber && (
@@ -382,6 +426,116 @@ function PhoneSettings({ tenant, mutation }: { tenant: TenantData; mutation: Set
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+function TwilioNumberSetup({ tenant }: { tenant: TenantData }) {
+  const queryClient = useQueryClient();
+
+  const locationParts = [tenant?.city, tenant?.state].filter(Boolean);
+  const locationLabel = locationParts.length > 0 ? locationParts.join(", ") : null;
+
+  const {
+    data: availableNumbers,
+    isLoading: searching,
+    error: searchError,
+  } = useQuery<AvailableNumber[]>({
+    queryKey: ["available-numbers"],
+    queryFn: async () => {
+      const res = await fetch("/api/twilio/available-numbers");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Search failed");
+      return json.data;
+    },
+  });
+
+  const purchaseMutation = useMutation({
+    mutationFn: async (phoneNumber: string) => {
+      const res = await fetch("/api/twilio/available-numbers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneNumber }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Purchase failed");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenant"] });
+    },
+  });
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
+      <p className="text-sm font-medium text-amber-900">
+        No phone number assigned yet. Select a number below to enable missed-call handling.
+      </p>
+
+      {locationLabel && (
+        <p className="text-xs text-muted-foreground">
+          Showing numbers near <span className="font-medium text-foreground">{locationLabel}</span>
+        </p>
+      )}
+
+      {searching && (
+        <div className="text-center py-4 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
+          Searching available numbers{locationLabel ? ` near ${locationLabel}` : ""}...
+        </div>
+      )}
+
+      {searchError && (
+        <p className="text-sm text-destructive text-center py-2">
+          {(searchError as Error).message}
+        </p>
+      )}
+
+      {availableNumbers && availableNumbers.length === 0 && (
+        <p className="text-sm text-muted-foreground text-center py-2">
+          No numbers found in your area. Please contact support.
+        </p>
+      )}
+
+      {availableNumbers && availableNumbers.length > 0 && (
+        <div className="space-y-2">
+          {availableNumbers.map((n) => (
+            <div
+              key={n.phoneNumber}
+              className="flex items-center justify-between rounded-lg border bg-white p-3"
+            >
+              <div>
+                <p className="font-mono font-medium">{n.phoneNumber}</p>
+                {n.locality && (
+                  <p className="text-xs text-muted-foreground">
+                    {n.locality}
+                    {n.region ? `, ${n.region}` : ""}
+                  </p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                onClick={() => purchaseMutation.mutate(n.phoneNumber)}
+                disabled={purchaseMutation.isPending}
+              >
+                {purchaseMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Phone className="h-4 w-4 mr-1" /> Select
+                  </>
+                )}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {purchaseMutation.isError && (
+        <p className="text-xs text-destructive text-center">
+          {purchaseMutation.error.message}
+        </p>
+      )}
+    </div>
   );
 }
 

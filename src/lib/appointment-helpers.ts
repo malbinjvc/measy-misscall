@@ -15,7 +15,9 @@ export function computeAppointmentPrice(
     subOptions: { id: string; price: DecimalLike }[];
   } | null
 ): number {
-  const basePrice = toNumber(serviceOption?.price) || toNumber(service.price);
+  const servicePrice = toNumber(service.price);
+  const optionPrice = toNumber(serviceOption?.price);
+  const basePrice = servicePrice + optionPrice;
   const lineTotal = basePrice * appointment.quantity;
 
   let subTotal = 0;
@@ -29,4 +31,38 @@ export function computeAppointmentPrice(
   }
 
   return lineTotal + subTotal;
+}
+
+// ─── Multi-item helpers ──────────────────────────────
+
+export interface AppointmentItemForCalc {
+  quantity: number;
+  selectedSubOptions: string[];
+  service: { price: DecimalLike; duration: number };
+  serviceOption: {
+    price: DecimalLike;
+    duration?: number | null;
+    subOptions: { id: string; price: DecimalLike }[];
+  } | null;
+}
+
+export function computeItemPrice(item: AppointmentItemForCalc): number {
+  return computeAppointmentPrice(
+    { quantity: item.quantity, selectedSubOptions: item.selectedSubOptions },
+    item.service,
+    item.serviceOption
+  );
+}
+
+export function computeMultiItemPrice(items: AppointmentItemForCalc[]): number {
+  return items.reduce((sum, item) => sum + computeItemPrice(item), 0);
+}
+
+export function computeItemDuration(item: AppointmentItemForCalc): number {
+  const duration = item.serviceOption?.duration ?? item.service.duration;
+  return duration * item.quantity;
+}
+
+export function computeMultiItemDuration(items: AppointmentItemForCalc[]): number {
+  return items.reduce((sum, item) => sum + computeItemDuration(item), 0);
 }

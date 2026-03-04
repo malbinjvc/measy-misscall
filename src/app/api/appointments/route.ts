@@ -4,14 +4,25 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createAppointmentSchema, updateAppointmentSchema } from "@/lib/validations";
-import { computeAppointmentPrice } from "@/lib/appointment-helpers";
+import { computeAppointmentPrice, computeMultiItemPrice, computeMultiItemDuration } from "@/lib/appointment-helpers";
 import { sanitizePagination } from "@/lib/utils";
 import { z, ZodError } from "zod";
+
+const appointmentItemInclude = {
+  service: true,
+  serviceOption: {
+    include: { subOptions: { where: { isActive: true } } },
+  },
+} satisfies Prisma.AppointmentItemInclude;
 
 const appointmentInclude = {
   service: true,
   serviceOption: {
     include: { subOptions: { where: { isActive: true } } },
+  },
+  items: {
+    include: appointmentItemInclude,
+    orderBy: { sortOrder: "asc" as const },
   },
 } satisfies Prisma.AppointmentInclude;
 
@@ -20,11 +31,19 @@ type AppointmentWithRelations = Prisma.AppointmentGetPayload<{
 }>;
 
 function enrichAppointment(apt: AppointmentWithRelations) {
-  const totalPrice = computeAppointmentPrice(
-    { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
-    apt.service,
-    apt.serviceOption
-  );
+  // Use items-based pricing when items exist, fallback to legacy
+  let totalPrice: number;
+  if (apt.items && apt.items.length > 0) {
+    totalPrice = computeMultiItemPrice(apt.items);
+  } else if (apt.service) {
+    totalPrice = computeAppointmentPrice(
+      { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
+      apt.service,
+      apt.serviceOption
+    );
+  } else {
+    totalPrice = 0;
+  }
   const resolvedSubOptions = apt.serviceOption?.subOptions?.filter(
     (s) => apt.selectedSubOptions?.includes(s.id)
   ) ?? [];
@@ -106,21 +125,29 @@ export async function GET(req: NextRequest) {
 
     const enriched = appointments.map(enrichAppointment);
 
-    // Compute total revenue from all appointments (not just current page)
-    const allAppointments = await prisma.appointment.findMany({
-      where: { tenantId },
+    // Compute total revenue from non-cancelled appointments
+    const revenueAppointments = await prisma.appointment.findMany({
+      where: { tenantId, status: { not: "CANCELLED" } },
       include: appointmentInclude,
     });
-    const totalRevenue = allAppointments.reduce(
-      (sum, apt) => sum + computeAppointmentPrice(
-        { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
-        apt.service,
-        apt.serviceOption
-      ),
+    const totalRevenue = revenueAppointments.reduce(
+      (sum, apt) => {
+        if (apt.items && apt.items.length > 0) {
+          return sum + computeMultiItemPrice(apt.items);
+        }
+        if (apt.service) {
+          return sum + computeAppointmentPrice(
+            { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
+            apt.service,
+            apt.serviceOption
+          );
+        }
+        return sum;
+      },
       0
     );
 
-    const totalAll = allAppointments.length;
+    const totalAll = statusCounts.reduce((sum, item) => sum + item._count, 0);
 
     const stats = {
       totalAppointments: totalAll,
@@ -158,45 +185,69 @@ export async function POST(req: NextRequest) {
 
     const tenantId = session.user.tenantId;
 
-    // Verify service belongs to tenant
-    const service = await prisma.service.findFirst({
-      where: { id: validated.serviceId, tenantId, isActive: true },
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { autoConfirmAppointments: true },
     });
-    if (!service) {
-      return NextResponse.json({ success: false, error: "Service not found" }, { status: 404 });
+
+    // Normalize items: use items array if provided, otherwise wrap legacy fields
+    const rawItems = validated.items?.length
+      ? validated.items
+      : validated.serviceId
+        ? [{ serviceId: validated.serviceId, serviceOptionId: validated.serviceOptionId, quantity: validated.quantity, selectedSubOptionIds: validated.selectedSubOptionIds }]
+        : [];
+
+    if (rawItems.length === 0) {
+      return NextResponse.json({ success: false, error: "At least one service is required" }, { status: 400 });
     }
 
-    let duration = service.duration;
-    let serviceOptionId: string | null = null;
-    let quantity = validated.quantity ?? 1;
-    let selectedSubOptions: string[] = [];
+    // Validate each item and compute aggregate duration
+    let totalDuration = 0;
+    const validatedItems: { serviceId: string; serviceOptionId: string | null; quantity: number; selectedSubOptions: string[]; sortOrder: number }[] = [];
 
-    if (validated.serviceOptionId) {
-      const option = await prisma.serviceOption.findFirst({
-        where: { id: validated.serviceOptionId, serviceId: service.id, isActive: true },
-        include: { subOptions: { where: { isActive: true } } },
+    for (let i = 0; i < rawItems.length; i++) {
+      const item = rawItems[i];
+      const service = await prisma.service.findFirst({
+        where: { id: item.serviceId, tenantId, isActive: true },
       });
-      if (!option) {
-        return NextResponse.json({ success: false, error: "Service option not found" }, { status: 404 });
+      if (!service) {
+        return NextResponse.json({ success: false, error: `Service not found for item ${i + 1}` }, { status: 404 });
       }
-      if (option.duration) duration = option.duration;
-      serviceOptionId = option.id;
 
-      if (quantity < option.minQuantity) quantity = option.minQuantity;
-      if (quantity > option.maxQuantity) quantity = option.maxQuantity;
+      let duration = service.duration;
+      let serviceOptionId: string | null = null;
+      let quantity = item.quantity ?? 1;
+      let selectedSubOptions: string[] = [];
 
-      if (validated.selectedSubOptionIds?.length) {
-        const validSubIds = option.subOptions.map((s) => s.id);
-        for (const subId of validated.selectedSubOptionIds) {
-          if (!validSubIds.includes(subId)) {
-            return NextResponse.json({ success: false, error: "Invalid sub-option selected" }, { status: 400 });
-          }
+      if (item.serviceOptionId) {
+        const option = await prisma.serviceOption.findFirst({
+          where: { id: item.serviceOptionId, serviceId: service.id, isActive: true },
+          include: { subOptions: { where: { isActive: true } } },
+        });
+        if (!option) {
+          return NextResponse.json({ success: false, error: `Service option not found for item ${i + 1}` }, { status: 404 });
         }
-        selectedSubOptions = validated.selectedSubOptionIds;
+        if (option.duration) duration = option.duration;
+        serviceOptionId = option.id;
+        if (quantity < option.minQuantity) quantity = option.minQuantity;
+        if (quantity > option.maxQuantity) quantity = option.maxQuantity;
+
+        if (item.selectedSubOptionIds?.length) {
+          const validSubIds = option.subOptions.map((s) => s.id);
+          for (const subId of item.selectedSubOptionIds) {
+            if (!validSubIds.includes(subId)) {
+              return NextResponse.json({ success: false, error: `Invalid sub-option in item ${i + 1}` }, { status: 400 });
+            }
+          }
+          selectedSubOptions = item.selectedSubOptionIds;
+        }
       }
+
+      totalDuration += duration * quantity;
+      validatedItems.push({ serviceId: item.serviceId, serviceOptionId, quantity, selectedSubOptions, sortOrder: i });
     }
 
-    const totalDuration = duration * quantity;
+    // Calculate end time from aggregate duration
     const [hours, minutes] = validated.startTime.split(":").map(Number);
     const startMinutes = hours * 60 + minutes;
     const endMinutes = startMinutes + totalDuration;
@@ -205,10 +256,21 @@ export async function POST(req: NextRequest) {
     const appointment = await prisma.appointment.create({
       data: {
         tenantId,
-        serviceId: validated.serviceId,
-        serviceOptionId,
-        quantity,
-        selectedSubOptions,
+        // Legacy fields: set to first item for backward compat
+        serviceId: validatedItems[0].serviceId,
+        serviceOptionId: validatedItems[0].serviceOptionId,
+        quantity: validatedItems[0].quantity,
+        selectedSubOptions: validatedItems[0].selectedSubOptions,
+        // Nested create items
+        items: {
+          create: validatedItems.map((item) => ({
+            serviceId: item.serviceId,
+            serviceOptionId: item.serviceOptionId,
+            quantity: item.quantity,
+            selectedSubOptions: item.selectedSubOptions,
+            sortOrder: item.sortOrder,
+          })),
+        },
         customerName: validated.customerName,
         customerPhone: validated.customerPhone,
         customerEmail: validated.customerEmail || null,
@@ -216,7 +278,12 @@ export async function POST(req: NextRequest) {
         startTime: validated.startTime,
         endTime,
         notes: validated.notes || null,
-        status: "PENDING",
+        vehicleYear: validated.vehicleYear || null,
+        vehicleType: validated.vehicleType || null,
+        vehicleMake: validated.vehicleMake || null,
+        vehicleModel: validated.vehicleModel || null,
+        appointmentPreference: validated.appointmentPreference || null,
+        status: tenant?.autoConfirmAppointments ? "CONFIRMED" : "PENDING",
       },
       include: appointmentInclude,
     });
@@ -277,7 +344,19 @@ export async function PATCH(req: NextRequest) {
 
     const appointment = await prisma.appointment.findFirst({
       where: { id, tenantId: session.user.tenantId },
-      include: { service: true, serviceOption: true },
+      include: {
+        service: true,
+        serviceOption: true,
+        items: {
+          include: {
+            service: true,
+            serviceOption: {
+              include: { subOptions: { where: { isActive: true } } },
+            },
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+      },
     });
 
     if (!appointment) {
@@ -288,11 +367,22 @@ export async function PATCH(req: NextRequest) {
     const updateData: Prisma.AppointmentUpdateInput = {};
     if (validated.status) updateData.status = validated.status;
     if (validated.notes !== undefined) updateData.notes = validated.notes;
+    if (validated.vehicleYear !== undefined) updateData.vehicleYear = validated.vehicleYear || null;
+    if (validated.vehicleType !== undefined) updateData.vehicleType = validated.vehicleType || null;
+    if (validated.vehicleMake !== undefined) updateData.vehicleMake = validated.vehicleMake || null;
+    if (validated.vehicleModel !== undefined) updateData.vehicleModel = validated.vehicleModel || null;
+    if (validated.appointmentPreference !== undefined) updateData.appointmentPreference = validated.appointmentPreference || null;
 
     // Reschedule: recalculate endTime from service duration
     if (validated.date && validated.startTime) {
-      const duration = appointment.serviceOption?.duration || appointment.service.duration;
-      const totalDuration = duration * (appointment.quantity || 1);
+      // Use items-based duration when items exist, fallback to legacy
+      let totalDuration: number;
+      if (appointment.items && appointment.items.length > 0) {
+        totalDuration = computeMultiItemDuration(appointment.items);
+      } else {
+        const duration = appointment.serviceOption?.duration || appointment.service?.duration || 60;
+        totalDuration = duration * (appointment.quantity || 1);
+      }
       const [hours, minutes] = validated.startTime.split(":").map(Number);
       const startMinutes = hours * 60 + minutes;
       const endMinutes = startMinutes + totalDuration;

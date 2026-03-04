@@ -127,20 +127,17 @@ export async function POST(req: NextRequest) {
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { assignedTwilioNumber: true, onboardingStep: true, status: true },
+      select: { assignedTwilioNumber: true, status: true },
     });
 
     if (!tenant) {
       return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
     }
 
-    // Only allow purchase during PHONE_SETUP onboarding step or for ACTIVE tenants
-    const allowedSteps = ["PHONE_SETUP"];
-    const isOnboarding = tenant.status === "ONBOARDING" && allowedSteps.includes(tenant.onboardingStep);
-    const isActive = tenant.status === "ACTIVE";
-    if (!isOnboarding && !isActive) {
+    // Only allow purchase for ACTIVE tenants (pay first, then set up phone)
+    if (tenant.status !== "ACTIVE") {
       return NextResponse.json(
-        { success: false, error: "Phone number purchase not allowed at this step" },
+        { success: false, error: "Complete onboarding and subscribe before setting up a phone number" },
         { status: 403 }
       );
     }

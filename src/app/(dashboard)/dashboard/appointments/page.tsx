@@ -23,7 +23,7 @@ import {
   formatDate, formatDateUTC, formatCurrency, formatPhoneNumber, generateTimeSlots,
   timeStringToMinutes,
 } from "@/lib/utils";
-import { computeAppointmentPrice } from "@/lib/appointment-helpers";
+import { computeAppointmentPrice, computeMultiItemPrice, computeMultiItemDuration } from "@/lib/appointment-helpers";
 
 // ─── Types ────────────────────────────────────────────
 
@@ -55,6 +55,23 @@ interface Service {
   options: ServiceOption[];
 }
 
+interface AppointmentItem {
+  id: string;
+  serviceId: string;
+  service: { id: string; name: string; price: number | null; duration: number };
+  serviceOptionId?: string | null;
+  serviceOption: {
+    id: string;
+    name: string;
+    price: number | null;
+    duration?: number | null;
+    subOptions: SubOption[];
+  } | null;
+  quantity: number;
+  selectedSubOptions: string[];
+  sortOrder: number;
+}
+
 interface Appointment {
   id: string;
   customerName: string;
@@ -75,8 +92,14 @@ interface Appointment {
     duration?: number | null;
     subOptions: SubOption[];
   } | null;
+  items?: AppointmentItem[];
   totalPrice: number;
   resolvedSubOptions: SubOption[];
+  vehicleYear?: string | null;
+  vehicleType?: string | null;
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  appointmentPreference?: string | null;
 }
 
 interface BusinessHour {
@@ -113,6 +136,9 @@ type AppointmentUpdateMutation = UseMutationResult<
 
 const STATUSES = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"] as const;
 
+const STATUS_LABELS: Record<string, string> = { PENDING: "PROCESSING" };
+const statusLabel = (s: string) => (STATUS_LABELS[s] || s).replace(/_/g, " ");
+
 
 const DAY_MAP: Record<string, number> = {
   SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3,
@@ -120,9 +146,9 @@ const DAY_MAP: Record<string, number> = {
 };
 
 const STATUS_DOT_COLORS: Record<string, string> = {
-  PENDING: "bg-yellow-400",
+  PENDING: "bg-green-500",
   CONFIRMED: "bg-blue-500",
-  COMPLETED: "bg-green-500",
+  COMPLETED: "bg-[#6040E0]",
   CANCELLED: "bg-red-400",
   NO_SHOW: "bg-gray-400",
 };
@@ -194,6 +220,7 @@ export default function AppointmentsPage() {
       if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
+    refetchInterval: 30000,
   });
 
   const { data: calendarData } = useQuery<CalendarResponse>({
@@ -204,6 +231,7 @@ export default function AppointmentsPage() {
       return res.json();
     },
     enabled: activeView === "calendar",
+    refetchInterval: 30000,
   });
 
   const updateMutation = useMutation({
@@ -269,9 +297,9 @@ export default function AppointmentsPage() {
             </CardContent>
           </Card>
           {([
-            { status: "PENDING", label: "Pending", icon: Clock, bg: "bg-yellow-100", text: "text-yellow-600" },
+            { status: "PENDING", label: "Processing", icon: Clock, bg: "bg-green-100", text: "text-green-600" },
             { status: "CONFIRMED", label: "Confirmed", icon: CheckCircle, bg: "bg-purple-100", text: "text-purple-600" },
-            { status: "COMPLETED", label: "Completed", icon: CheckCircle, bg: "bg-green-100", text: "text-green-600" },
+            { status: "COMPLETED", label: "Completed", icon: CheckCircle, bg: "bg-[#6040E0]/15", text: "text-[#6040E0]" },
             { status: "CANCELLED", label: "Cancelled", icon: XCircle, bg: "bg-red-100", text: "text-red-600" },
             { status: "NO_SHOW", label: "No Show", icon: UserX, bg: "bg-gray-100", text: "text-gray-600" },
           ] as const).map(({ status: s, label, icon: Icon, bg, text }) => (
@@ -319,7 +347,7 @@ export default function AppointmentsPage() {
         >
           <option value="">All Statuses</option>
           {STATUSES.map((s) => (
-            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+            <option key={s} value={s}>{statusLabel(s)}</option>
           ))}
         </Select>
       </div>
@@ -465,6 +493,10 @@ function ListView({
     }
   }
 
+  const hasVehicleData = data?.data?.some(
+    (a: Appointment) => a.vehicleYear || a.vehicleMake || a.vehicleModel
+  ) ?? false;
+
   if (isLoading) return <LoadingTable />;
 
   if (!data?.data?.length) {
@@ -490,7 +522,7 @@ function ListView({
           >
             <option value="">Change status to...</option>
             {STATUSES.map((s) => (
-              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+              <option key={s} value={s}>{statusLabel(s)}</option>
             ))}
           </Select>
           <Button
@@ -526,6 +558,7 @@ function ListView({
               <TableHead>Time</TableHead>
               <TableHead>Customer</TableHead>
               <TableHead>Service / Option</TableHead>
+              {hasVehicleData && <TableHead>Vehicle</TableHead>}
               <TableHead>Qty</TableHead>
               <TableHead>Price</TableHead>
               <TableHead>Status</TableHead>
@@ -551,11 +584,30 @@ function ListView({
                 <TableCell className="text-sm">{apt.startTime} — {apt.endTime}</TableCell>
                 <TableCell className="font-medium">{apt.customerName}</TableCell>
                 <TableCell className="text-sm">
-                  <div>{apt.service?.name}</div>
-                  {apt.serviceOption && (
-                    <div className="text-xs text-muted-foreground">{apt.serviceOption.name}</div>
+                  {apt.items && apt.items.length > 1 ? (
+                    <div>
+                      <div>{apt.items[0].service?.name}</div>
+                      {apt.items[0].serviceOption && (
+                        <div className="text-xs text-muted-foreground">{apt.items[0].serviceOption.name}</div>
+                      )}
+                      <div className="text-xs text-primary font-medium">+{apt.items.length - 1} more</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div>{apt.service?.name}</div>
+                      {apt.serviceOption && (
+                        <div className="text-xs text-muted-foreground">{apt.serviceOption.name}</div>
+                      )}
+                    </div>
                   )}
                 </TableCell>
+                {hasVehicleData && (
+                  <TableCell className="text-sm">
+                    {(apt.vehicleYear || apt.vehicleMake || apt.vehicleModel)
+                      ? [apt.vehicleYear, apt.vehicleMake, apt.vehicleModel].filter(Boolean).join(" ")
+                      : ""}
+                  </TableCell>
+                )}
                 <TableCell className="text-sm">{apt.quantity > 1 ? apt.quantity : ""}</TableCell>
                 <TableCell className="text-sm font-medium">
                   {formatCurrency(apt.totalPrice)}
@@ -577,7 +629,7 @@ function ListView({
                       onChange={(e) => updateMutation.mutate({ id: apt.id, status: e.target.value })}
                     >
                       {STATUSES.map((s) => (
-                        <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                        <option key={s} value={s}>{statusLabel(s)}</option>
                       ))}
                     </Select>
                   </div>
@@ -798,20 +850,54 @@ function AppointmentDetailDialog({
             )}
           </div>
 
-          {/* Service */}
+          {/* Services */}
           <div>
-            <Label className="text-xs text-muted-foreground">Service</Label>
-            <p className="font-medium">{appointment.service?.name}</p>
-            {appointment.serviceOption && (
-              <p className="text-sm text-muted-foreground">{appointment.serviceOption.name}</p>
-            )}
-            {appointment.quantity > 1 && (
-              <p className="text-sm text-muted-foreground">Quantity: {appointment.quantity}</p>
+            <Label className="text-xs text-muted-foreground">
+              {appointment.items && appointment.items.length > 1 ? "Services" : "Service"}
+            </Label>
+            {appointment.items && appointment.items.length > 0 ? (
+              <div className="space-y-2 mt-1">
+                {appointment.items.map((item, idx) => (
+                  <div key={item.id} className={`${idx > 0 ? "pt-2 border-t" : ""}`}>
+                    <p className="font-medium">{item.service?.name}</p>
+                    {item.serviceOption && (
+                      <p className="text-sm text-muted-foreground">{item.serviceOption.name}</p>
+                    )}
+                    {item.quantity > 1 && (
+                      <p className="text-sm text-muted-foreground">Qty: {item.quantity}</p>
+                    )}
+                    {item.serviceOption?.subOptions && item.selectedSubOptions?.length > 0 && (
+                      <ul className="text-sm mt-1">
+                        {item.serviceOption.subOptions
+                          .filter((s) => item.selectedSubOptions.includes(s.id))
+                          .map((sub) => (
+                            <li key={sub.id} className="flex justify-between text-xs">
+                              <span>+ {sub.name}</span>
+                              {sub.price != null && sub.price > 0 && (
+                                <span className="text-muted-foreground">+{formatCurrency(sub.price)}</span>
+                              )}
+                            </li>
+                          ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <p className="font-medium">{appointment.service?.name}</p>
+                {appointment.serviceOption && (
+                  <p className="text-sm text-muted-foreground">{appointment.serviceOption.name}</p>
+                )}
+                {appointment.quantity > 1 && (
+                  <p className="text-sm text-muted-foreground">Quantity: {appointment.quantity}</p>
+                )}
+              </>
             )}
           </div>
 
-          {/* Sub-options (add-ons) */}
-          {appointment.resolvedSubOptions?.length > 0 && (
+          {/* Sub-options (add-ons) — legacy single-item only */}
+          {(!appointment.items || appointment.items.length === 0) && appointment.resolvedSubOptions?.length > 0 && (
             <div>
               <Label className="text-xs text-muted-foreground">Add-ons</Label>
               <ul className="text-sm space-y-1">
@@ -824,6 +910,39 @@ function AppointmentDetailDialog({
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Vehicle Info */}
+          {(appointment.vehicleYear || appointment.vehicleMake || appointment.vehicleModel) && (
+            <div>
+              <Label className="text-xs text-muted-foreground">Vehicle</Label>
+              <p className="font-medium">
+                {[appointment.vehicleYear, appointment.vehicleMake, appointment.vehicleModel].filter(Boolean).join(" ")}
+              </p>
+              {appointment.vehicleType && (
+                <p className="text-sm text-muted-foreground capitalize">{appointment.vehicleType}</p>
+              )}
+            </div>
+          )}
+
+          {/* Appointment Preference */}
+          {appointment.appointmentPreference && (
+            <div>
+              <Label className="text-xs text-muted-foreground">Preference</Label>
+              <span className={`inline-block mt-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                appointment.appointmentPreference === "DROP_OFF"
+                  ? "bg-blue-100 text-blue-700"
+                  : appointment.appointmentPreference === "WAIT_FOR_IT"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-purple-100 text-purple-700"
+              }`}>
+                {appointment.appointmentPreference === "DROP_OFF"
+                  ? "Drop Off"
+                  : appointment.appointmentPreference === "WAIT_FOR_IT"
+                  ? "Wait"
+                  : "Pick-up/Drop-off"}
+              </span>
             </div>
           )}
 
@@ -854,7 +973,7 @@ function AppointmentDetailDialog({
               onChange={(e) => setStatus(e.target.value)}
             >
               {STATUSES.map((s) => (
-                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                <option key={s} value={s}>{statusLabel(s)}</option>
               ))}
             </Select>
           </div>
@@ -953,11 +1072,10 @@ function RescheduleDialog({
     return map;
   }, [appointmentsForDate, appointment.id]);
 
-  // Service duration for overlap checking
-  const serviceDuration = appointment.serviceOption?.duration
-    ? appointment.serviceOption.duration
-    : appointment.service.duration;
-  const totalDuration = serviceDuration * (appointment.quantity || 1);
+  // Service duration for overlap checking — use items when available
+  const totalDuration = appointment.items && appointment.items.length > 0
+    ? computeMultiItemDuration(appointment.items)
+    : (appointment.serviceOption?.duration || appointment.service.duration) * (appointment.quantity || 1);
   const slotsNeeded = Math.ceil(totalDuration / 30);
 
   async function handleSubmit() {
@@ -1002,7 +1120,11 @@ function RescheduleDialog({
           {/* Current appointment info */}
           <div className="rounded-lg bg-muted/50 p-3">
             <p className="text-xs text-muted-foreground mb-1">Current Schedule</p>
-            <p className="text-sm font-medium">{appointment.customerName} — {appointment.service?.name}</p>
+            <p className="text-sm font-medium">
+              {appointment.customerName} — {appointment.items && appointment.items.length > 1
+                ? `${appointment.items[0].service?.name} +${appointment.items.length - 1} more`
+                : appointment.service?.name}
+            </p>
             <p className="text-sm text-muted-foreground">
               {formatDateUTC(appointment.date)} at {appointment.startTime} — {appointment.endTime}
             </p>
@@ -1042,8 +1164,8 @@ function RescheduleDialog({
                   if (bookedApt) {
                     const statusBg: Record<string, string> = {
                       CONFIRMED: "bg-blue-100 border-blue-400",
-                      PENDING: "bg-yellow-100 border-yellow-400",
-                      COMPLETED: "bg-green-100 border-green-400",
+                      PENDING: "bg-green-100 border-green-400",
+                      COMPLETED: "bg-[#6040E0]/15 border-[#6040E0]",
                     };
                     const style = statusBg[bookedApt.status] || "bg-gray-100 border-gray-400";
                     return (
@@ -1113,6 +1235,17 @@ function RescheduleDialog({
 
 // ─── Create Appointment Dialog ────────────────────────
 
+interface CartItem {
+  id: string; // local unique key
+  serviceId: string;
+  serviceOptionId: string;
+  quantity: number;
+  selectedSubOptionIds: string[];
+}
+
+let cartItemCounter = 0;
+function newCartItemId() { return `cart-${++cartItemCounter}`; }
+
 function CreateAppointmentDialog({
   prefilledDate, existingAppointments, onSelectAppointment, onClose, onCreated,
 }: {
@@ -1122,11 +1255,10 @@ function CreateAppointmentDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  // Form state
-  const [selectedServiceId, setSelectedServiceId] = useState("");
-  const [selectedOptionId, setSelectedOptionId] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [selectedSubOptionIds, setSelectedSubOptionIds] = useState<string[]>([]);
+  // Multi-item cart state
+  const [cartItems, setCartItems] = useState<CartItem[]>([
+    { id: newCartItemId(), serviceId: "", serviceOptionId: "", quantity: 1, selectedSubOptionIds: [] },
+  ]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -1159,7 +1291,6 @@ function CreateAppointmentDialog({
     },
   });
 
-  // Use prop appointments if provided (from calendar click), otherwise pull from fetched data
   const appointmentsForDate: Appointment[] = useMemo(() => {
     if (existingAppointments && existingAppointments.length > 0) return existingAppointments;
     if (!date || !bhData?.data) return [];
@@ -1167,25 +1298,25 @@ function CreateAppointmentDialog({
   }, [existingAppointments, date, bhData?.data]);
 
   const services: Service[] = servicesData?.data || [];
-  const selectedService = services.find((s) => s.id === selectedServiceId) || null;
-  const selectedOption = selectedService?.options.find((o) => o.id === selectedOptionId) || null;
 
-  // Reset option/quantity when service changes
-  function handleServiceChange(serviceId: string) {
-    setSelectedServiceId(serviceId);
-    setSelectedOptionId("");
-    setQuantity(1);
-    setSelectedSubOptionIds([]);
+  function updateCartItem(itemId: string, updates: Partial<CartItem>) {
+    setCartItems((prev) => prev.map((item) => item.id === itemId ? { ...item, ...updates } : item));
+    setStartTime(""); // reset time when cart changes
   }
 
-  function handleOptionChange(optionId: string) {
-    setSelectedOptionId(optionId);
-    const opt = selectedService?.options.find((o) => o.id === optionId);
-    setQuantity(opt?.defaultQuantity || 1);
-    setSelectedSubOptionIds([]);
+  function addCartItem() {
+    setCartItems((prev) => [
+      ...prev,
+      { id: newCartItemId(), serviceId: "", serviceOptionId: "", quantity: 1, selectedSubOptionIds: [] },
+    ]);
   }
 
-  // Time slots based on business hours — always 30-min intervals for the visual grid
+  function removeCartItem(itemId: string) {
+    setCartItems((prev) => prev.filter((item) => item.id !== itemId));
+    setStartTime("");
+  }
+
+  // Time slots based on business hours
   const timeSlots = useMemo(() => {
     if (!date || !bhData?.businessHours) return [];
     const dayOfWeek = new Date(date + "T12:00:00").getDay();
@@ -1195,7 +1326,6 @@ function CreateAppointmentDialog({
     return generateTimeSlots(bh.openTime, bh.closeTime, 30);
   }, [date, bhData?.businessHours]);
 
-  // Build a map of occupied 30-min blocks → appointment (skip cancelled/no-show)
   const occupiedSlotMap = useMemo(() => {
     const map = new Map<number, Appointment>();
     for (const apt of appointmentsForDate) {
@@ -1209,7 +1339,6 @@ function CreateAppointmentDialog({
     return map;
   }, [appointmentsForDate]);
 
-  // Compute conflicting appointments (outside business hours)
   const conflictingAppointments = useMemo(() => {
     if (!appointmentsForDate.length || !date || !bhData?.businessHours) return [];
     const dayOfWeek = new Date(date + "T12:00:00").getDay();
@@ -1226,32 +1355,46 @@ function CreateAppointmentDialog({
     });
   }, [appointmentsForDate, date, bhData?.businessHours]);
 
-  // Computed price
-  const computedPrice = useMemo(() => {
-    if (!selectedService) return 0;
-    return computeAppointmentPrice(
-      { quantity, selectedSubOptions: selectedSubOptionIds },
-      selectedService,
-      selectedOption ? {
-        price: selectedOption.price,
-        subOptions: selectedOption.subOptions,
-      } : null
-    );
-  }, [selectedService, selectedOption, quantity, selectedSubOptionIds]);
+  // Aggregate duration and price across all cart items
+  const { totalDuration: aggregateDuration, totalPrice: computedPrice } = useMemo(() => {
+    let dur = 0;
+    let price = 0;
+    for (const item of cartItems) {
+      const svc = services.find((s) => s.id === item.serviceId);
+      if (!svc) continue;
+      const opt = svc.options.find((o) => o.id === item.serviceOptionId) || null;
+      const itemDur = (opt?.duration ?? svc.duration) * (item.quantity || 1);
+      dur += itemDur;
+      price += computeAppointmentPrice(
+        { quantity: item.quantity || 1, selectedSubOptions: item.selectedSubOptionIds },
+        svc,
+        opt ? { price: opt.price, subOptions: opt.subOptions } : null
+      );
+    }
+    return { totalDuration: dur, totalPrice: price };
+  }, [cartItems, services]);
+
+  const aggregateSlotsNeeded = Math.ceil(aggregateDuration / 30);
 
   async function handleSubmit() {
     setError("");
     setFieldErrors({});
     setSubmitting(true);
     try {
+      const items = cartItems
+        .filter((item) => item.serviceId)
+        .map((item) => ({
+          serviceId: item.serviceId,
+          serviceOptionId: item.serviceOptionId || undefined,
+          quantity: item.quantity,
+          selectedSubOptionIds: item.selectedSubOptionIds.length > 0 ? item.selectedSubOptionIds : undefined,
+        }));
+
       const res = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serviceId: selectedServiceId,
-          serviceOptionId: selectedOptionId || undefined,
-          quantity,
-          selectedSubOptionIds: selectedSubOptionIds.length > 0 ? selectedSubOptionIds : undefined,
+          items,
           customerName,
           customerPhone,
           customerEmail: customerEmail || undefined,
@@ -1263,9 +1406,7 @@ function CreateAppointmentDialog({
       if (!res.ok) throw new Error("Request failed");
       const result = await res.json();
       if (!result.success) {
-        if (result.fieldErrors) {
-          setFieldErrors(result.fieldErrors);
-        }
+        if (result.fieldErrors) setFieldErrors(result.fieldErrors);
         setError(result.error || "Failed to create appointment");
         return;
       }
@@ -1277,8 +1418,8 @@ function CreateAppointmentDialog({
     }
   }
 
-  const canSubmit =
-    selectedServiceId && customerName && customerPhone && date && startTime && !submitting;
+  const hasValidItem = cartItems.some((item) => item.serviceId);
+  const canSubmit = hasValidItem && customerName && customerPhone && date && startTime && !submitting;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -1292,115 +1433,112 @@ function CreateAppointmentDialog({
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Service */}
-          <div>
-            <Label>Service</Label>
-            <Select
-              className="mt-1"
-              value={selectedServiceId}
-              onChange={(e) => handleServiceChange(e.target.value)}
-            >
-              <option value="">Select a service</option>
-              {services.filter((s) => s.options?.length > 0 || s.price != null).map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </Select>
-          </div>
-
-          {/* Options (radio-style) */}
-          {selectedService && selectedService.options.length > 0 && (
-            <div>
-              <Label>Option</Label>
-              <div className="mt-1 space-y-2">
-                {selectedService.options.map((opt) => (
-                  <label
-                    key={opt.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      selectedOptionId === opt.id ? "border-primary bg-primary/5" : "hover:bg-muted/30"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="serviceOption"
-                      value={opt.id}
-                      checked={selectedOptionId === opt.id}
-                      onChange={(e) => handleOptionChange(e.target.value)}
-                      className="accent-primary"
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{opt.name}</p>
-                      {opt.description && (
-                        <p className="text-xs text-muted-foreground">{opt.description}</p>
-                      )}
-                    </div>
-                    {opt.price != null && (
-                      <span className="text-sm font-medium">{formatCurrency(opt.price)}</span>
-                    )}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Quantity */}
-          {selectedOption && selectedOption.maxQuantity > 1 && (
-            <div>
-              <Label>Quantity</Label>
-              <div className="flex items-center gap-3 mt-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={quantity <= selectedOption.minQuantity}
-                  onClick={() => setQuantity(Math.max(selectedOption.minQuantity, quantity - 1))}
+          {/* Cart Items */}
+          {cartItems.map((cartItem, idx) => {
+            const svc = services.find((s) => s.id === cartItem.serviceId) || null;
+            const opt = svc?.options.find((o) => o.id === cartItem.serviceOptionId) || null;
+            return (
+              <div key={cartItem.id} className="rounded-lg border p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Service {cartItems.length > 1 ? `#${idx + 1}` : ""}</Label>
+                  {cartItems.length > 1 && (
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeCartItem(cartItem.id)}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                <Select
+                  value={cartItem.serviceId}
+                  onChange={(e) => updateCartItem(cartItem.id, { serviceId: e.target.value, serviceOptionId: "", quantity: 1, selectedSubOptionIds: [] })}
                 >
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <span className="text-lg font-medium w-8 text-center">{quantity}</span>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={quantity >= selectedOption.maxQuantity}
-                  onClick={() => setQuantity(Math.min(selectedOption.maxQuantity, quantity + 1))}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+                  <option value="">Select a service</option>
+                  {services.filter((s) => s.options?.length > 0 || s.price != null).map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </Select>
 
-          {/* Sub-options (add-ons) */}
-          {selectedOption && selectedOption.subOptions.length > 0 && (
-            <div>
-              <Label>Add-ons</Label>
-              <div className="mt-1 space-y-2">
-                {selectedOption.subOptions.map((sub) => (
-                  <label
-                    key={sub.id}
-                    className="flex items-center gap-3 p-2 rounded-lg border cursor-pointer hover:bg-muted/30"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedSubOptionIds.includes(sub.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedSubOptionIds([...selectedSubOptionIds, sub.id]);
-                        } else {
-                          setSelectedSubOptionIds(selectedSubOptionIds.filter((id) => id !== sub.id));
-                        }
-                      }}
-                      className="accent-primary"
-                    />
-                    <span className="flex-1 text-sm">{sub.name}</span>
-                    {sub.price != null && sub.price > 0 && (
-                      <span className="text-sm text-muted-foreground">+{formatCurrency(sub.price)}</span>
-                    )}
-                  </label>
-                ))}
+                {/* Options */}
+                {svc && svc.options.length > 0 && (
+                  <div className="space-y-1.5">
+                    {svc.options.map((o) => (
+                      <label
+                        key={o.id}
+                        className={`flex items-center gap-3 p-2 rounded-lg border cursor-pointer transition-colors ${
+                          cartItem.serviceOptionId === o.id ? "border-primary bg-primary/5" : "hover:bg-muted/30"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`opt-${cartItem.id}`}
+                          checked={cartItem.serviceOptionId === o.id}
+                          onChange={() => updateCartItem(cartItem.id, { serviceOptionId: o.id, quantity: o.defaultQuantity || 1, selectedSubOptionIds: [] })}
+                          className="accent-primary"
+                        />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{o.name}</p>
+                          {o.description && <p className="text-xs text-muted-foreground">{o.description}</p>}
+                        </div>
+                        {o.price != null && <span className="text-sm font-medium">{formatCurrency(o.price)}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {/* Quantity */}
+                {opt && opt.maxQuantity > 1 && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground">Qty:</span>
+                    <Button variant="outline" size="icon" className="h-7 w-7"
+                      disabled={cartItem.quantity <= opt.minQuantity}
+                      onClick={() => updateCartItem(cartItem.id, { quantity: Math.max(opt.minQuantity, cartItem.quantity - 1) })}
+                    ><Minus className="h-3 w-3" /></Button>
+                    <span className="text-sm font-medium w-6 text-center">{cartItem.quantity}</span>
+                    <Button variant="outline" size="icon" className="h-7 w-7"
+                      disabled={cartItem.quantity >= opt.maxQuantity}
+                      onClick={() => updateCartItem(cartItem.id, { quantity: Math.min(opt.maxQuantity, cartItem.quantity + 1) })}
+                    ><Plus className="h-3 w-3" /></Button>
+                  </div>
+                )}
+
+                {/* Sub-options */}
+                {opt && opt.subOptions.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Add-ons:</span>
+                    {opt.subOptions.map((sub) => (
+                      <label key={sub.id} className="flex items-center gap-2 p-1.5 rounded cursor-pointer hover:bg-muted/30">
+                        <input
+                          type="checkbox"
+                          checked={cartItem.selectedSubOptionIds.includes(sub.id)}
+                          onChange={(e) => {
+                            updateCartItem(cartItem.id, {
+                              selectedSubOptionIds: e.target.checked
+                                ? [...cartItem.selectedSubOptionIds, sub.id]
+                                : cartItem.selectedSubOptionIds.filter((id) => id !== sub.id),
+                            });
+                          }}
+                          className="accent-primary"
+                        />
+                        <span className="flex-1 text-sm">{sub.name}</span>
+                        {sub.price != null && sub.price > 0 && (
+                          <span className="text-xs text-muted-foreground">+{formatCurrency(sub.price)}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })}
+
+          {/* Add another service button */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={addCartItem}
+          >
+            <Plus className="h-4 w-4 mr-1" /> Add Another Service
+          </Button>
 
           <hr />
 
@@ -1456,7 +1594,7 @@ function CreateAppointmentDialog({
             />
           </div>
 
-          {/* Conflict warning — appointments outside business hours */}
+          {/* Conflict warning */}
           {conflictingAppointments.length > 0 && (
             <div className="rounded-lg border border-orange-300 bg-orange-50 p-3">
               <div className="flex items-center gap-2 mb-2">
@@ -1480,7 +1618,7 @@ function CreateAppointmentDialog({
             </div>
           )}
 
-          {/* Time slots — color-coded grid */}
+          {/* Time slots */}
           {date && timeSlots.length > 0 && (
             <div>
               <Label>Time</Label>
@@ -1488,13 +1626,11 @@ function CreateAppointmentDialog({
                 {timeSlots.map((slot) => {
                   const slotMin = timeStringToMinutes(slot);
                   const bookedApt = occupiedSlotMap.get(slotMin);
-                  const serviceDuration = selectedOption?.duration || selectedService?.duration || 30;
-                  const slotsNeeded = Math.ceil(serviceDuration / 30);
 
-                  // Check if selecting this slot would overlap a booked slot
+                  // Check overlap using aggregate duration
                   let wouldOverlap = false;
-                  if (!bookedApt && selectedService) {
-                    for (let s = 0; s < slotsNeeded; s++) {
+                  if (!bookedApt && hasValidItem) {
+                    for (let s = 0; s < aggregateSlotsNeeded; s++) {
                       if (occupiedSlotMap.has(slotMin + s * 30)) {
                         wouldOverlap = true;
                         break;
@@ -1503,11 +1639,10 @@ function CreateAppointmentDialog({
                   }
 
                   if (bookedApt) {
-                    // Booked slot — colored by status
                     const statusBg: Record<string, string> = {
                       CONFIRMED: "bg-blue-100 border-blue-400",
-                      PENDING: "bg-yellow-100 border-yellow-400",
-                      COMPLETED: "bg-green-100 border-green-400",
+                      PENDING: "bg-green-100 border-green-400",
+                      COMPLETED: "bg-[#6040E0]/15 border-[#6040E0]",
                     };
                     const style = statusBg[bookedApt.status] || "bg-gray-100 border-gray-400";
                     return (
@@ -1524,7 +1659,6 @@ function CreateAppointmentDialog({
                   }
 
                   if (wouldOverlap) {
-                    // Unavailable — would overlap with booked slot
                     return (
                       <div
                         key={slot}
@@ -1536,7 +1670,6 @@ function CreateAppointmentDialog({
                     );
                   }
 
-                  // Available slot
                   const isSelected = startTime === slot;
                   return (
                     <button
@@ -1576,21 +1709,21 @@ function CreateAppointmentDialog({
           </div>
 
           {/* Summary */}
-          {selectedService && (
+          {hasValidItem && (
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-sm font-medium">Summary</p>
-              <p className="text-sm text-muted-foreground">
-                {selectedService.name}
-                {selectedOption ? ` — ${selectedOption.name}` : ""}
-                {quantity > 1 ? ` x${quantity}` : ""}
-              </p>
-              {selectedSubOptionIds.length > 0 && selectedOption && (
-                <p className="text-xs text-muted-foreground">
-                  + {selectedOption.subOptions
-                    .filter((s) => selectedSubOptionIds.includes(s.id))
-                    .map((s) => s.name)
-                    .join(", ")}
-                </p>
+              {cartItems.filter((ci) => ci.serviceId).map((ci) => {
+                const svc = services.find((s) => s.id === ci.serviceId);
+                const opt = svc?.options.find((o) => o.id === ci.serviceOptionId);
+                if (!svc) return null;
+                return (
+                  <p key={ci.id} className="text-sm text-muted-foreground">
+                    {svc.name}{opt ? ` — ${opt.name}` : ""}{ci.quantity > 1 ? ` x${ci.quantity}` : ""}
+                  </p>
+                );
+              })}
+              {aggregateDuration > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">{aggregateDuration} min total</p>
               )}
               <p className="text-lg font-bold mt-1">{formatCurrency(computedPrice)}</p>
             </div>

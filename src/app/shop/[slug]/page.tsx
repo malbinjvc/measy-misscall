@@ -26,7 +26,10 @@ import {
   Minus,
   Plus as PlusIcon,
   Check,
+  User,
 } from "lucide-react";
+import DOMPurify from "dompurify";
+import { FaFacebookF, FaInstagram, FaWhatsapp } from "react-icons/fa";
 
 // ─── Types ──────────────────────────────────────────────
 
@@ -40,14 +43,170 @@ interface ShopData {
   state: string | null;
   zipCode: string | null;
   logoUrl: string | null;
+  facebookUrl: string | null;
+  instagramUrl: string | null;
   heroMediaUrl: string | null;
   heroMediaType: string | null;
+  websiteConfig: WebsiteConfigType | null;
   services: Service[];
   businessHours: BusinessHour[];
   reviews: Review[];
   averageRating: number;
   reviewCount: number;
   hasAiChat: boolean;
+}
+
+// ─── Website Config Types (inline for public page) ──────
+
+interface TextConfigType {
+  content: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  color: string;
+  alignment: "left" | "center" | "right";
+  letterSpacing: number;
+  lineHeight: number;
+  textShadow?: { enabled: boolean; x: number; y: number; blur: number; color: string };
+  gradient?: { enabled: boolean; from: string; to: string; direction: string };
+}
+
+interface CtaConfigType {
+  enabled: boolean;
+  text: string;
+  url: string;
+}
+
+interface OverlayConfigType {
+  color: string;
+  opacity: number;
+}
+
+interface WebsiteSectionBase {
+  id: string;
+  visible: boolean;
+}
+
+interface HeroSectionType extends WebsiteSectionBase {
+  type: "hero";
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfigType;
+  subtitle: TextConfigType;
+  cta: CtaConfigType;
+  overlay: OverlayConfigType;
+  minHeight: number;
+}
+
+interface ReviewsSectionType extends WebsiteSectionBase {
+  type: "reviews";
+  title: TextConfigType;
+}
+
+interface ServicesSectionType extends WebsiteSectionBase {
+  type: "services";
+  title: TextConfigType;
+}
+
+interface AboutSectionType extends WebsiteSectionBase {
+  type: "about";
+  title: TextConfigType;
+  body: TextConfigType;
+}
+
+interface TextBlockSectionType extends WebsiteSectionBase {
+  type: "text-block";
+  title: TextConfigType;
+  body: TextConfigType;
+  backgroundColor: string;
+  padding: number;
+}
+
+interface MediaBlockSectionType extends WebsiteSectionBase {
+  type: "media-block";
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  caption: TextConfigType;
+  aspectRatio: string;
+}
+
+interface TextOverMediaSectionType extends WebsiteSectionBase {
+  type: "text-over-media";
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfigType;
+  subtitle: TextConfigType;
+  cta: CtaConfigType;
+  overlay: OverlayConfigType;
+  minHeight: number;
+}
+
+// ─── Element Types (inside custom sections) ──────────
+
+interface TextElementType {
+  type: "text";
+  id: string;
+  title: TextConfigType;
+  body: TextConfigType;
+}
+
+interface MediaElementType {
+  type: "media";
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  caption: TextConfigType;
+  aspectRatio: string;
+}
+
+interface TextOverMediaElementType {
+  type: "text-over-media";
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfigType;
+  subtitle: TextConfigType;
+  cta: CtaConfigType;
+  overlay: OverlayConfigType;
+  minHeight: number;
+}
+
+type SectionElementType = TextElementType | MediaElementType | TextOverMediaElementType;
+
+interface CustomSectionType extends WebsiteSectionBase {
+  type: "custom";
+  name: string;
+  backgroundColor: string;
+  padding: number;
+  elements: SectionElementType[];
+}
+
+type WebsiteSectionType =
+  | HeroSectionType
+  | ReviewsSectionType
+  | ServicesSectionType
+  | AboutSectionType
+  | TextBlockSectionType
+  | MediaBlockSectionType
+  | TextOverMediaSectionType
+  | CustomSectionType;
+
+interface NavBarConfigType {
+  logoUrl: string | null;
+  logoType: "image" | "gif" | "video";
+  logoHeight: number;
+  showName: boolean;
+}
+
+interface WebsiteConfigType {
+  theme: {
+    primaryColor: string;
+    secondaryColor: string;
+    fontFamily: string;
+    backgroundColor: string;
+  };
+  navBar?: NavBarConfigType;
+  sections: WebsiteSectionType[];
 }
 
 interface ServiceSubOption {
@@ -141,12 +300,29 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // If websiteConfig exists, render the configured page
+  if (shop.websiteConfig) {
+    return (
+      <ConfiguredShopPage
+        shop={shop}
+        config={shop.websiteConfig}
+        slug={params.slug}
+        reviewModalOpen={reviewModalOpen}
+        setReviewModalOpen={setReviewModalOpen}
+        chatOpen={chatOpen}
+        setChatOpen={setChatOpen}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Sticky Header */}
       <ShopHeader
         name={shop.name}
+        slug={params.slug}
         phone={shop.phone}
+        address={[shop.address, shop.city, shop.state, shop.zipCode].filter(Boolean).join(", ") || null}
         menuOpen={menuOpen}
         onToggleMenu={() => setMenuOpen(!menuOpen)}
       />
@@ -185,6 +361,8 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
         <ReviewsSection
           reviews={shop.reviews}
           reviewCount={shop.reviewCount}
+          averageRating={shop.averageRating}
+          slug={params.slug}
           onWriteReview={() => setReviewModalOpen(true)}
         />
 
@@ -237,29 +415,74 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
 
 function ShopHeader({
   name,
+  slug,
   phone,
+  address,
   menuOpen,
   onToggleMenu,
+  navBar,
 }: {
   name: string;
+  slug: string;
   phone: string | null;
+  address: string | null;
   menuOpen: boolean;
   onToggleMenu: () => void;
+  navBar?: NavBarConfigType;
 }) {
+  const logoHeight = navBar?.logoHeight ?? 36;
+  const showName = navBar?.showName ?? true;
+  const hasLogo = navBar?.logoUrl;
+  const mapsUrl = address
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+    : null;
+
   return (
     <header className="sticky top-0 z-50 bg-white border-b shadow-sm">
       <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
         <button onClick={onToggleMenu} className="p-2 -ml-2 rounded-lg hover:bg-gray-100">
           {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
-        <h1 className="text-lg font-bold truncate mx-4">{name}</h1>
-        {phone ? (
-          <a href={`tel:${phone}`} className="p-2 -mr-2 rounded-lg hover:bg-gray-100">
-            <Phone className="h-5 w-5 text-primary" />
-          </a>
-        ) : (
-          <div className="w-9" />
-        )}
+        <div className="flex items-center gap-2 mx-4 min-w-0 flex-1 justify-center">
+          {hasLogo && (
+            navBar.logoType === "video" ? (
+              <video
+                src={navBar.logoUrl!}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="shrink-0 object-contain"
+                style={{ height: logoHeight }}
+              />
+            ) : (
+              <img
+                src={navBar.logoUrl!}
+                alt={name}
+                className="shrink-0 object-contain"
+                style={{ height: logoHeight }}
+              />
+            )
+          )}
+          {showName && <h1 className="text-lg font-bold truncate">{name}</h1>}
+        </div>
+        <div className="flex items-center gap-1">
+          <Link href={`/shop/${slug}/account`} className="p-2 rounded-lg hover:bg-gray-100">
+            <User className="h-5 w-5 text-primary" />
+          </Link>
+          {mapsUrl && (
+            <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-gray-100">
+              <MapPin className="h-5 w-5 text-primary" />
+            </a>
+          )}
+          {phone ? (
+            <a href={`tel:${phone}`} className="p-2 -mr-2 rounded-lg hover:bg-gray-100">
+              <Phone className="h-5 w-5 text-primary" />
+            </a>
+          ) : (
+            <div className="w-9" />
+          )}
+        </div>
       </div>
     </header>
   );
@@ -309,6 +532,13 @@ function MobileMenu({
             </button>
           ))}
           <div className="border-t my-2" />
+          <Link
+            href={`/shop/${slug}/account`}
+            onClick={onClose}
+            className="block px-6 py-3.5 text-sm font-medium hover:bg-gray-50"
+          >
+            My Account
+          </Link>
           <Link
             href={`/shop/${slug}/book`}
             onClick={onClose}
@@ -424,17 +654,11 @@ function ServicesSection({ services, slug }: { services: Service[]; slug: string
 
   return (
     <section id="services" className="py-8">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Wrench className="h-5 w-5 text-primary" />
           Our Services
         </h3>
-        <Link href={`/shop/${slug}/book`}>
-          <Button size="sm">
-            <Calendar className="mr-1.5 h-3.5 w-3.5" />
-            Book Now
-          </Button>
-        </Link>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {services.map((service) => (
@@ -480,11 +704,11 @@ function ServiceCard({ service, slug }: { service: Service; slug: string }) {
   }
 
   // Calculate total price
-  const optionPrice = selectedOption?.price ?? 0;
+  const optionPrice = Number(selectedOption?.price ?? 0);
   const subOptionsTotal = selectedOption
     ? selectedOption.subOptions
         .filter((s) => selectedSubOptionIds.includes(s.id))
-        .reduce((sum, s) => sum + (s.price ?? 0), 0)
+        .reduce((sum, s) => sum + Number(s.price ?? 0), 0)
     : 0;
   const totalPrice = optionPrice * quantity + subOptionsTotal;
 
@@ -505,7 +729,7 @@ function ServiceCard({ service, slug }: { service: Service; slug: string }) {
           onClick={() => hasOptions && setExpanded(!expanded)}
         >
           <div className="flex-1 min-w-0">
-            <h4 className="font-semibold text-sm truncate">{service.name}</h4>
+            <h4 className="font-semibold text-lg truncate">{service.name}</h4>
             <div className="flex items-center gap-2 mt-1">
               <p className="text-xs text-muted-foreground">{service.duration} min</p>
               {service.price !== null && !hasOptions && (
@@ -703,48 +927,42 @@ function ServiceCard({ service, slug }: { service: Service; slug: string }) {
 function ReviewsSection({
   reviews,
   reviewCount,
+  averageRating,
+  slug,
   onWriteReview,
 }: {
   reviews: Review[];
   reviewCount: number;
+  averageRating: number;
+  slug: string;
   onWriteReview: () => void;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
-
-  // Auto-scroll from left
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container || reviews.length === 0) return;
-
-    let animationId: number;
-    let speed = 0.5; // pixels per frame
-
-    const step = () => {
-      if (!paused && container) {
-        container.scrollLeft += speed;
-        // Loop: when scrolled past halfway (duplicated content), reset
-        if (container.scrollLeft >= container.scrollWidth / 2) {
-          container.scrollLeft = 0;
-        }
-      }
-      animationId = requestAnimationFrame(step);
-    };
-
-    animationId = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(animationId);
-  }, [paused, reviews.length]);
+  // ~292px per card (280 + 12 gap), scroll at ~30px/s
+  const duration = reviews.length * 10;
 
   return (
     <section id="reviews" className="py-8">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Star className="h-5 w-5 text-primary" />
-          Reviews {reviewCount > 0 && `(${reviewCount})`}
+          Reviews
         </h3>
-        <Button size="sm" onClick={onWriteReview}>
-          Write a Review
-        </Button>
+        <div className="flex items-center justify-between mt-2">
+          <Link href={`/shop/${slug}/reviews`} className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+            {reviewCount > 0 && (
+              <>
+                <StarDisplay rating={averageRating} size="sm" />
+                <span className="font-semibold text-sm">{averageRating.toFixed(1)}</span>
+                <span className="text-sm text-muted-foreground">({reviewCount} reviews)</span>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </>
+            )}
+          </Link>
+          <Button size="sm" onClick={onWriteReview}>
+            Write a Review
+          </Button>
+        </div>
       </div>
       {reviews.length === 0 ? (
         <p className="text-muted-foreground text-sm text-center py-8">
@@ -752,18 +970,33 @@ function ReviewsSection({
         </p>
       ) : (
         <div
-          ref={scrollRef}
+          className="overflow-hidden cursor-pointer"
           onMouseEnter={() => setPaused(true)}
           onMouseLeave={() => setPaused(false)}
-          onTouchStart={() => setPaused(true)}
-          onTouchEnd={() => setPaused(false)}
-          className="flex gap-3 overflow-x-auto scrollbar-hide"
-          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          onTouchStart={(e) => {
+            setPaused(true);
+            (e.currentTarget as HTMLDivElement).dataset.touchX = String(e.touches[0].clientX);
+          }}
+          onTouchEnd={(e) => {
+            setPaused(false);
+            const startX = Number((e.currentTarget as HTMLDivElement).dataset.touchX ?? 0);
+            const endX = e.changedTouches[0].clientX;
+            if (Math.abs(endX - startX) < 10) {
+              window.location.href = `/shop/${slug}/reviews`;
+            }
+          }}
         >
-          {/* Duplicate reviews for seamless loop */}
-          {[...reviews, ...reviews].map((review, idx) => (
-            <ReviewCard key={`${review.id}-${idx}`} review={review} />
-          ))}
+          <div
+            className="flex gap-3 w-max"
+            style={{
+              animation: `review-marquee ${duration}s linear infinite`,
+              animationPlayState: paused ? "paused" : "running",
+            }}
+          >
+            {[...reviews, ...reviews].map((review, idx) => (
+              <ReviewCard key={`${review.id}-${idx}`} review={review} />
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -1089,6 +1322,8 @@ function ContactSection({ shop }: { shop: ShopData }) {
   const mapQuery = encodeURIComponent(
     [shop.address, shop.city, shop.state, shop.zipCode].filter(Boolean).join(", ")
   );
+  const whatsappNumber = shop.phone?.replace(/[^0-9]/g, "") || "";
+  const hasSocials = shop.facebookUrl || shop.instagramUrl || whatsappNumber;
 
   return (
     <section id="contact" className="py-8 border-t">
@@ -1097,39 +1332,62 @@ function ContactSection({ shop }: { shop: ShopData }) {
         Contact Us
       </h3>
       <Card>
-        <CardContent className="p-4 space-y-3">
-          {shop.phone && (
-            <a
-              href={`tel:${shop.phone}`}
-              className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Phone className="h-5 w-5 text-primary" />
+        <CardContent className="p-4">
+          <div className="flex items-start gap-4">
+            <div className="flex-1 space-y-3">
+              {shop.phone && (
+                <a
+                  href={`tel:${shop.phone}`}
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Phone className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Call Us</p>
+                    <p className="text-sm text-muted-foreground">{shop.phone}</p>
+                  </div>
+                </a>
+              )}
+              {shop.address && (
+                <a
+                  href={`https://maps.google.com/?q=${mapQuery}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <MapPin className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Visit Us</p>
+                    <p className="text-sm text-muted-foreground">
+                      {fullAddress} {shop.zipCode}
+                    </p>
+                  </div>
+                </a>
+              )}
+            </div>
+            {hasSocials && (
+              <div className="flex flex-col items-center gap-3 pl-3 border-l">
+                {shop.instagramUrl && (
+                  <a href={shop.instagramUrl} target="_blank" rel="noopener noreferrer" className="h-10 w-10 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center hover:opacity-80 transition-opacity" title="Instagram">
+                    <FaInstagram className="h-5 w-5 text-white" />
+                  </a>
+                )}
+                {shop.facebookUrl && (
+                  <a href={shop.facebookUrl} target="_blank" rel="noopener noreferrer" className="h-10 w-10 rounded-full bg-[#1877F2] flex items-center justify-center hover:opacity-80 transition-opacity" title="Facebook">
+                    <FaFacebookF className="h-5 w-5 text-white" />
+                  </a>
+                )}
+                {whatsappNumber && (
+                  <a href={`https://wa.me/${whatsappNumber}`} target="_blank" rel="noopener noreferrer" className="h-10 w-10 rounded-full bg-[#25D366] flex items-center justify-center hover:opacity-80 transition-opacity" title="WhatsApp">
+                    <FaWhatsapp className="h-5 w-5 text-white" />
+                  </a>
+                )}
               </div>
-              <div>
-                <p className="text-sm font-medium">Call Us</p>
-                <p className="text-sm text-muted-foreground">{shop.phone}</p>
-              </div>
-            </a>
-          )}
-          {shop.address && (
-            <a
-              href={`https://maps.google.com/?q=${mapQuery}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <MapPin className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">Visit Us</p>
-                <p className="text-sm text-muted-foreground">
-                  {fullAddress} {shop.zipCode}
-                </p>
-              </div>
-            </a>
-          )}
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -1283,5 +1541,521 @@ function AiChatWidget({
         </div>
       )}
     </>
+  );
+}
+
+// ─── Configured Shop Page (Website Builder) ─────────────
+
+function styledTextStyle(tc: TextConfigType, themeFont?: string): React.CSSProperties {
+  // Only set fontFamily if it differs from the theme font (let theme cascade via inheritance)
+  const fontFamily = tc.fontFamily && tc.fontFamily !== "Inter" && tc.fontFamily !== themeFont
+    ? `'${tc.fontFamily}', sans-serif`
+    : undefined;
+
+  const style: React.CSSProperties = {
+    fontFamily,
+    fontSize: tc.fontSize,
+    fontWeight: tc.fontWeight,
+    color: tc.gradient?.enabled ? "transparent" : tc.color,
+    textAlign: tc.alignment,
+    letterSpacing: tc.letterSpacing,
+    lineHeight: tc.lineHeight,
+  };
+  if (tc.textShadow?.enabled) {
+    style.textShadow = `${tc.textShadow.x}px ${tc.textShadow.y}px ${tc.textShadow.blur}px ${tc.textShadow.color}`;
+  }
+  if (tc.gradient?.enabled) {
+    style.backgroundImage = `linear-gradient(${tc.gradient.direction}, ${tc.gradient.from}, ${tc.gradient.to})`;
+    style.WebkitBackgroundClip = "text";
+    style.backgroundClip = "text";
+  }
+  return style;
+}
+
+function sanitizeContent(html: string): string {
+  if (typeof window === "undefined") return html;
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ["span", "strong", "em", "u", "br", "p", "mark"],
+    ALLOWED_ATTR: ["style"],
+    ALLOW_DATA_ATTR: false,
+  });
+}
+
+// Filter CSS properties inside style attributes to only allow safe ones
+if (typeof window !== "undefined") {
+  DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+    if (data.attrName === "style" && data.attrValue) {
+      const allowed = data.attrValue
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => {
+          const prop = s.split(":")[0]?.trim().toLowerCase();
+          return prop === "color" || prop === "background-color";
+        })
+        .join("; ");
+      data.attrValue = allowed;
+    }
+  });
+}
+
+function isContentEmpty(content: string): boolean {
+  const stripped = content
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .trim();
+  return stripped.length === 0;
+}
+
+function StyledText({ config, themeFont }: { config: TextConfigType; themeFont?: string }) {
+  if (!config.content || isContentEmpty(config.content)) return null;
+  const hasHTML = /<[a-z][\s\S]*>/i.test(config.content);
+  if (hasHTML) {
+    return (
+      <div
+        style={styledTextStyle(config, themeFont)}
+        dangerouslySetInnerHTML={{ __html: sanitizeContent(config.content) }}
+      />
+    );
+  }
+  return <div style={styledTextStyle(config, themeFont)}>{config.content}</div>;
+}
+
+function collectFontsFromText(fonts: Set<string>, tc: TextConfigType | undefined) {
+  if (tc?.fontFamily) fonts.add(tc.fontFamily);
+}
+
+function useGoogleFonts(config: WebsiteConfigType) {
+  useEffect(() => {
+    const fonts = new Set<string>();
+    fonts.add(config.theme.fontFamily);
+    for (const section of config.sections) {
+      if ("headline" in section) collectFontsFromText(fonts, (section as HeroSectionType).headline);
+      if ("subtitle" in section) collectFontsFromText(fonts, (section as HeroSectionType).subtitle);
+      if ("title" in section) collectFontsFromText(fonts, (section as ReviewsSectionType).title);
+      if ("body" in section) collectFontsFromText(fonts, (section as AboutSectionType).body);
+      if ("caption" in section) collectFontsFromText(fonts, (section as MediaBlockSectionType).caption);
+      if (section.type === "custom") {
+        for (const el of section.elements) {
+          if (el.type === "text") {
+            collectFontsFromText(fonts, el.title);
+            collectFontsFromText(fonts, el.body);
+          } else if (el.type === "media") {
+            collectFontsFromText(fonts, el.caption);
+          } else if (el.type === "text-over-media") {
+            collectFontsFromText(fonts, el.headline);
+            collectFontsFromText(fonts, el.subtitle);
+          }
+        }
+      }
+    }
+    // Remove "Inter" — already loaded by Next.js font optimization
+    fonts.delete("Inter");
+    if (fonts.size === 0) return;
+
+    const families = Array.from(fonts)
+      .map((f) => f.replace(/ /g, "+") + ":wght@300;400;500;600;700")
+      .join("&family=");
+    const id = "google-fonts-custom";
+
+    // Add preconnect links if not already present
+    if (!document.querySelector('link[href="https://fonts.googleapis.com"]')) {
+      const preconnect1 = document.createElement("link");
+      preconnect1.rel = "preconnect";
+      preconnect1.href = "https://fonts.googleapis.com";
+      document.head.appendChild(preconnect1);
+
+      const preconnect2 = document.createElement("link");
+      preconnect2.rel = "preconnect";
+      preconnect2.href = "https://fonts.gstatic.com";
+      preconnect2.crossOrigin = "anonymous";
+      document.head.appendChild(preconnect2);
+    }
+
+    // Remove old font link if it exists
+    const old = document.getElementById(id);
+    if (old) old.remove();
+
+    // Insert font stylesheet into <head>
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?family=${families}&display=swap`;
+    document.head.appendChild(link);
+
+    return () => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    };
+  }, [config]);
+}
+
+function ConfiguredHero({ section, theme, slug }: { section: HeroSectionType; theme: WebsiteConfigType["theme"]; slug: string }) {
+  return (
+    <section id="hero" className="relative flex items-center justify-center overflow-hidden" style={{ minHeight: `${section.minHeight}vh` }}>
+      {section.mediaUrl ? (
+        section.mediaType === "video" ? (
+          <video src={section.mediaUrl} autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <img src={section.mediaUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        )
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-700 to-gray-900" />
+      )}
+      <div className="absolute inset-0" style={{ backgroundColor: section.overlay.color, opacity: section.overlay.opacity }} />
+      <div className="relative z-10 text-center px-6 py-12 max-w-4xl mx-auto">
+        <StyledText config={section.headline} />
+        {section.subtitle.content && <div className="mt-4"><StyledText config={section.subtitle} /></div>}
+        {section.cta.enabled && (
+          <div className="mt-6">
+            <Link href={section.cta.url || `/shop/${slug}/book`}>
+              <Button size="lg" style={{ backgroundColor: theme.primaryColor }} className="text-white hover:opacity-90">
+                {section.cta.text || "Book Now"}
+              </Button>
+            </Link>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredReviews({ section, reviews, reviewCount, averageRating, slug, onWriteReview }: { section: ReviewsSectionType; reviews: Review[]; reviewCount: number; averageRating: number; slug: string; onWriteReview: () => void }) {
+  const [paused, setPaused] = useState(false);
+  const duration = reviews.length * 10;
+
+  return (
+    <section id="reviews" className="py-8">
+      <div className="flex items-center justify-between mb-4">
+        <Link href={`/shop/${slug}/reviews`} className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+          {reviewCount > 0 && (
+            <>
+              <StarDisplay rating={averageRating} size="sm" />
+              <span className="font-semibold text-sm">{averageRating.toFixed(1)}</span>
+              <span className="text-sm text-muted-foreground">({reviewCount} reviews)</span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            </>
+          )}
+        </Link>
+        <Button variant="outline" size="sm" onClick={onWriteReview}>
+          <Star className="h-4 w-4 mr-1" /> Write a Review
+        </Button>
+      </div>
+      {reviews.length > 0 ? (
+        <div
+          className="overflow-hidden cursor-pointer"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onTouchStart={(e) => {
+            setPaused(true);
+            (e.currentTarget as HTMLDivElement).dataset.touchX = String(e.touches[0].clientX);
+          }}
+          onTouchEnd={(e) => {
+            setPaused(false);
+            const startX = Number((e.currentTarget as HTMLDivElement).dataset.touchX ?? 0);
+            const endX = e.changedTouches[0].clientX;
+            if (Math.abs(endX - startX) < 10) {
+              window.location.href = `/shop/${slug}/reviews`;
+            }
+          }}
+        >
+          <div
+            className="flex gap-3 w-max"
+            style={{
+              animation: `review-marquee ${duration}s linear infinite`,
+              animationPlayState: paused ? "paused" : "running",
+            }}
+          >
+            {[...reviews, ...reviews].map((review, idx) => (
+              <ReviewCard key={`${review.id}-${idx}`} review={review} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground text-center mt-4">No reviews yet.</p>
+      )}
+    </section>
+  );
+}
+
+function ConfiguredServices({ section, services, slug }: { section: ServicesSectionType; services: Service[]; slug: string }) {
+  if (services.length === 0) return null;
+  return (
+    <section id="services" className="py-8">
+      <div className="mb-4">
+        <StyledText config={section.title} />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {services.map((service) => (
+          <ServiceCard key={service.id} service={service} slug={slug} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredAbout({ section }: { section: AboutSectionType }) {
+  return (
+    <section id="about" className="py-8">
+      <StyledText config={section.title} />
+      {section.body.content && <div className="mt-4"><StyledText config={section.body} /></div>}
+    </section>
+  );
+}
+
+function ConfiguredTextBlock({ section }: { section: TextBlockSectionType }) {
+  return (
+    <section style={{ backgroundColor: section.backgroundColor, padding: section.padding }}>
+      <div className="max-w-4xl mx-auto">
+        <StyledText config={section.title} />
+        {section.body.content && <div className="mt-3"><StyledText config={section.body} /></div>}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredMediaBlock({ section }: { section: MediaBlockSectionType }) {
+  const aspectStyle = section.aspectRatio === "auto" ? undefined : section.aspectRatio.replace("/", " / ");
+  return (
+    <section className="py-8">
+      <div className="max-w-4xl mx-auto px-4">
+        {section.mediaUrl ? (
+          section.mediaType === "video" ? (
+            <video src={section.mediaUrl} controls muted className="w-full rounded-lg" style={{ aspectRatio: aspectStyle, objectFit: "cover" }} />
+          ) : (
+            <img src={section.mediaUrl} alt="" className="w-full rounded-lg" style={{ aspectRatio: aspectStyle, objectFit: "cover" }} />
+          )
+        ) : (
+          <div className="bg-gray-200 rounded-lg flex items-center justify-center aspect-video max-h-[200px] sm:max-h-none">
+            <ImageIcon className="h-8 w-8 sm:h-12 sm:w-12 text-gray-400" />
+          </div>
+        )}
+        {section.caption.content && <div className="mt-2"><StyledText config={section.caption} /></div>}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredTextOverMedia({ section, theme, slug }: { section: TextOverMediaSectionType; theme: WebsiteConfigType["theme"]; slug: string }) {
+  return (
+    <section className="relative flex items-center justify-center overflow-hidden" style={{ minHeight: `${section.minHeight}vh` }}>
+      {section.mediaUrl ? (
+        section.mediaType === "video" ? (
+          <video src={section.mediaUrl} autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <img src={section.mediaUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        )
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-600 to-gray-800" />
+      )}
+      <div className="absolute inset-0" style={{ backgroundColor: section.overlay.color, opacity: section.overlay.opacity }} />
+      <div className="relative z-10 text-center px-6 py-12 max-w-4xl mx-auto">
+        <StyledText config={section.headline} />
+        {section.subtitle.content && <div className="mt-4"><StyledText config={section.subtitle} /></div>}
+        {section.cta.enabled && (
+          <div className="mt-6">
+            <Link href={section.cta.url || `/shop/${slug}/book`}>
+              <Button size="lg" style={{ backgroundColor: theme.primaryColor }} className="text-white hover:opacity-90">
+                {section.cta.text || "Learn More"}
+              </Button>
+            </Link>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredMediaElement({ element }: { element: MediaElementType }) {
+  const aspectStyle = element.aspectRatio === "auto" ? undefined : element.aspectRatio.replace("/", " / ");
+  return (
+    <div>
+      {element.mediaUrl ? (
+        element.mediaType === "video" ? (
+          <video src={element.mediaUrl} controls muted className="w-full rounded-lg" style={{ aspectRatio: aspectStyle, objectFit: "cover" }} />
+        ) : (
+          <img src={element.mediaUrl} alt="" className="w-full rounded-lg" style={{ aspectRatio: aspectStyle, objectFit: "cover" }} />
+        )
+      ) : (
+        <div className="bg-gray-200 rounded-lg flex items-center justify-center" style={{ aspectRatio: "16/9" }}>
+          <ImageIcon className="h-12 w-12 text-gray-400" />
+        </div>
+      )}
+      {element.caption.content && <div className="mt-2"><StyledText config={element.caption} /></div>}
+    </div>
+  );
+}
+
+function ConfiguredTextOverMediaElement({ element, theme, slug }: { element: TextOverMediaElementType; theme: WebsiteConfigType["theme"]; slug: string }) {
+  return (
+    <div className="relative flex items-center justify-center overflow-hidden rounded-lg" style={{ minHeight: `${element.minHeight}vh` }}>
+      {element.mediaUrl ? (
+        element.mediaType === "video" ? (
+          <video src={element.mediaUrl} autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <img src={element.mediaUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        )
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-600 to-gray-800" />
+      )}
+      <div className="absolute inset-0" style={{ backgroundColor: element.overlay.color, opacity: element.overlay.opacity }} />
+      <div className="relative z-10 text-center px-6 py-12 max-w-4xl mx-auto">
+        <StyledText config={element.headline} />
+        {element.subtitle.content && <div className="mt-4"><StyledText config={element.subtitle} /></div>}
+        {element.cta.enabled && (
+          <div className="mt-6">
+            <Link href={element.cta.url || `/shop/${slug}/book`}>
+              <Button size="lg" style={{ backgroundColor: theme.primaryColor }} className="text-white hover:opacity-90">
+                {element.cta.text || "Learn More"}
+              </Button>
+            </Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfiguredCustomSection({ section, theme, slug }: { section: CustomSectionType; theme: WebsiteConfigType["theme"]; slug: string }) {
+  return (
+    <section style={{ backgroundColor: section.backgroundColor, padding: section.padding }}>
+      <div className="max-w-4xl mx-auto space-y-6">
+        {section.elements.map((element) => {
+          switch (element.type) {
+            case "text":
+              return (
+                <div key={element.id}>
+                  {element.title.content && <StyledText config={element.title} />}
+                  {element.body.content && <div className="mt-3"><StyledText config={element.body} /></div>}
+                </div>
+              );
+            case "media":
+              return <ConfiguredMediaElement key={element.id} element={element} />;
+            case "text-over-media":
+              return <ConfiguredTextOverMediaElement key={element.id} element={element} theme={theme} slug={slug} />;
+            default:
+              return null;
+          }
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ConfiguredShopPage({
+  shop,
+  config,
+  slug,
+  reviewModalOpen,
+  setReviewModalOpen,
+  chatOpen,
+  setChatOpen,
+}: {
+  shop: ShopData;
+  config: WebsiteConfigType;
+  slug: string;
+  reviewModalOpen: boolean;
+  setReviewModalOpen: (open: boolean) => void;
+  chatOpen: boolean;
+  setChatOpen: (open: boolean) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [localShop, setLocalShop] = useState(shop);
+  useGoogleFonts(config);
+
+  const scrollTo = (id: string) => {
+    setMenuOpen(false);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: config.theme.backgroundColor, fontFamily: `'${config.theme.fontFamily}', sans-serif` }}>
+      {/* Google Fonts loaded via useGoogleFonts hook into <head> */}
+
+      <ShopHeader
+        name={localShop.name}
+        slug={slug}
+        phone={localShop.phone}
+        address={[localShop.address, localShop.city, localShop.state, localShop.zipCode].filter(Boolean).join(", ") || null}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen(!menuOpen)}
+        navBar={config.navBar}
+      />
+
+      <MobileMenu
+        open={menuOpen}
+        slug={slug}
+        onClose={() => setMenuOpen(false)}
+        onScrollTo={scrollTo}
+        onWriteReview={() => { setMenuOpen(false); setReviewModalOpen(true); }}
+      />
+
+      {/* Render sections in order */}
+      {config.sections.map((section) => {
+        if (!section.visible) return null;
+
+        switch (section.type) {
+          case "hero":
+            return <ConfiguredHero key={section.id} section={section} theme={config.theme} slug={slug} />;
+          case "reviews":
+            return (
+              <div key={section.id} className="max-w-4xl mx-auto px-4">
+                <ConfiguredReviews section={section} reviews={localShop.reviews} reviewCount={localShop.reviewCount} averageRating={localShop.averageRating} slug={slug} onWriteReview={() => setReviewModalOpen(true)} />
+              </div>
+            );
+          case "services":
+            return (
+              <div key={section.id} className="max-w-4xl mx-auto px-4">
+                <ConfiguredServices section={section} services={localShop.services} slug={slug} />
+              </div>
+            );
+          case "about":
+            return (
+              <div key={section.id} className="max-w-4xl mx-auto px-4">
+                <ConfiguredAbout section={section} />
+              </div>
+            );
+          case "text-block":
+            return <ConfiguredTextBlock key={section.id} section={section} />;
+          case "media-block":
+            return <ConfiguredMediaBlock key={section.id} section={section} />;
+          case "text-over-media":
+            return <ConfiguredTextOverMedia key={section.id} section={section} theme={config.theme} slug={slug} />;
+          case "custom":
+            return <ConfiguredCustomSection key={section.id} section={section} theme={config.theme} slug={slug} />;
+          default:
+            return null;
+        }
+      })}
+
+      {/* Business Hours + Contact (always appended) */}
+      <main className="max-w-4xl mx-auto px-4 pb-24">
+        <BusinessHoursSection businessHours={localShop.businessHours} />
+        <ContactSection shop={localShop} />
+      </main>
+
+      {reviewModalOpen && (
+        <WriteReviewModal
+          slug={slug}
+          onClose={() => setReviewModalOpen(false)}
+          onSuccess={(review) => {
+            setLocalShop((prev) => ({
+              ...prev,
+              reviews: [review, ...prev.reviews],
+              reviewCount: prev.reviewCount + 1,
+              averageRating: (prev.averageRating * prev.reviewCount + review.rating) / (prev.reviewCount + 1),
+            }));
+            setReviewModalOpen(false);
+          }}
+        />
+      )}
+
+      {localShop.hasAiChat && (
+        <AiChatWidget
+          slug={slug}
+          open={chatOpen}
+          onToggle={() => setChatOpen(!chatOpen)}
+        />
+      )}
+    </div>
   );
 }

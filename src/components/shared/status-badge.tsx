@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 
-const statusColors: Record<string, "default" | "secondary" | "destructive" | "outline" | "success" | "warning"> = {
+const statusColors: Record<string, "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "majorella"> = {
   // Call statuses
   MISSED: "destructive",
   ANSWERED: "success",
@@ -8,9 +8,9 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "ou
   BUSY: "warning",
   NO_ANSWER: "warning",
   // Appointment statuses
-  PENDING: "warning",
+  PENDING: "success",
   CONFIRMED: "default",
-  COMPLETED: "success",
+  COMPLETED: "majorella",
   CANCELLED: "destructive",
   NO_SHOW: "destructive",
   // SMS statuses
@@ -43,9 +43,13 @@ interface StatusBadgeProps {
   className?: string;
 }
 
+const statusLabels: Record<string, string> = {
+  PENDING: "PROCESSING",
+};
+
 export function StatusBadge({ status, className }: StatusBadgeProps) {
   const variant = statusColors[status] || "secondary";
-  const label = status.replace(/_/g, " ");
+  const label = (statusLabels[status] || status).replace(/_/g, " ");
 
   return (
     <Badge variant={variant} className={className}>

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { verifyCsrf } from "@/lib/csrf";
 import { chatMessageSchema } from "@/lib/validations";
 
 const chatTenantInclude = {
@@ -18,9 +17,6 @@ export async function POST(
   { params }: { params: { slug: string } }
 ) {
   try {
-    const csrfError = verifyCsrf(req);
-    if (csrfError) return csrfError;
-
     const ip = getClientIp(req);
     const limit = checkRateLimit(`chat:${ip}`, { max: 30, windowSec: 60 });
     if (!limit.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });

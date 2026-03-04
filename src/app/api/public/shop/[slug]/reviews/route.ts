@@ -3,7 +3,6 @@ import prisma from "@/lib/prisma";
 import { reviewSchema } from "@/lib/validations";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashOtp } from "@/lib/crypto";
-import { verifyCsrf } from "@/lib/csrf";
 
 export async function GET(
   req: NextRequest,
@@ -71,9 +70,6 @@ export async function POST(
   { params }: { params: { slug: string } }
 ) {
   try {
-    const csrfError = verifyCsrf(req);
-    if (csrfError) return csrfError;
-
     const ip = getClientIp(req);
     const limit = checkRateLimit(`reviews:${ip}`, { max: 5, windowSec: 600 });
     if (!limit.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
