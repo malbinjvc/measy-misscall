@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
 import { createAppointmentSchema } from "@/lib/validations";
-import { timeStringToMinutes } from "@/lib/utils";
+import { timeStringToMinutes, normalizePhoneForStorage } from "@/lib/utils";
 import { ZodError } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashOtp } from "@/lib/crypto";
 import { getCustomerFromRequest, signCustomerToken, setCustomerCookie } from "@/lib/customer-auth";
+import { sendSmsWithConsent, buildConfirmationSmsBody } from "@/lib/sms";
+import { formatDateUTC } from "@/lib/utils";
 
 export async function POST(
   req: NextRequest,
@@ -27,6 +29,8 @@ export async function POST(
 
     const body = await req.json();
     const validated = createAppointmentSchema.parse(body);
+    // Normalize phone to consistent format for storage
+    validated.customerPhone = normalizePhoneForStorage(validated.customerPhone);
 
     // Skip phone verification if customer is logged in with the same phone
     const customerPayload = await getCustomerFromRequest(req);
@@ -282,6 +286,19 @@ export async function POST(
 
       return { appointment: appt, customer };
     });
+
+    // Fire-and-forget: send confirmation SMS when auto-confirm is enabled
+    if (tenant.autoConfirmAppointments && tenant.assignedTwilioNumber) {
+      const dateStr = formatDateUTC(appointment.date);
+      const smsBody = buildConfirmationSmsBody(tenant.name, tenant.slug, dateStr, appointment.startTime);
+      sendSmsWithConsent({
+        tenantId: tenant.id,
+        to: appointment.customerPhone,
+        from: tenant.assignedTwilioNumber,
+        body: smsBody,
+        type: "APPOINTMENT_CONFIRMATION",
+      }).catch((err) => console.error("Auto-confirm SMS error:", err));
+    }
 
     // Auto-login: set customer auth cookie so they can access their account
     const token = await signCustomerToken({

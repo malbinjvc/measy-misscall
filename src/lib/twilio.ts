@@ -84,8 +84,13 @@ export async function verifyTwilioWebhook(req: Request): Promise<boolean> {
     const signature = req.headers.get("x-twilio-signature");
     if (!signature) return false;
 
-    // Build the full URL Twilio used to sign the request
-    const url = req.url;
+    // Build the full URL Twilio used to sign the request.
+    // req.url returns the internal URL (e.g. http://localhost:3000/...) but
+    // Twilio signs using the public URL (e.g. https://xyz.ngrok-free.dev/...).
+    // Use NEXT_PUBLIC_APP_URL + pathname to reconstruct the public URL.
+    const internalUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || internalUrl.origin;
+    const url = baseUrl + internalUrl.pathname + internalUrl.search;
 
     // Parse form data into a plain object for validation
     const clonedReq = req.clone();

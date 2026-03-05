@@ -5,7 +5,8 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createAppointmentSchema, updateAppointmentSchema } from "@/lib/validations";
 import { computeAppointmentPrice, computeMultiItemPrice, computeMultiItemDuration } from "@/lib/appointment-helpers";
-import { sanitizePagination } from "@/lib/utils";
+import { sanitizePagination, formatDateUTC } from "@/lib/utils";
+import { sendSmsWithConsent, buildConfirmationSmsBody } from "@/lib/sms";
 import { z, ZodError } from "zod";
 
 const appointmentItemInclude = {
@@ -325,10 +326,39 @@ export async function PATCH(req: NextRequest) {
       });
       const { ids, status } = bulkSchema.parse(body);
 
+      // Fetch current statuses before update (for PENDING→CONFIRMED detection)
+      const beforeAppointments = status === "CONFIRMED"
+        ? await prisma.appointment.findMany({
+            where: { id: { in: ids }, tenantId: session.user.tenantId, status: "PENDING" },
+            select: { id: true, customerPhone: true, date: true, startTime: true, smsConsent: true },
+          })
+        : [];
+
       const result = await prisma.appointment.updateMany({
         where: { id: { in: ids }, tenantId: session.user.tenantId },
         data: { status },
       });
+
+      // Fire-and-forget: send confirmation SMS for PENDING→CONFIRMED transitions
+      if (beforeAppointments.length > 0) {
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: session.user.tenantId },
+          select: { name: true, slug: true, assignedTwilioNumber: true },
+        });
+        if (tenant?.assignedTwilioNumber) {
+          for (const apt of beforeAppointments) {
+            const dateStr = formatDateUTC(apt.date);
+            const body = buildConfirmationSmsBody(tenant.name, tenant.slug, dateStr, apt.startTime);
+            sendSmsWithConsent({
+              tenantId: session.user.tenantId,
+              to: apt.customerPhone,
+              from: tenant.assignedTwilioNumber,
+              body,
+              type: "APPOINTMENT_CONFIRMATION",
+            }).catch((err) => console.error("Bulk confirmation SMS error:", err));
+          }
+        }
+      }
 
       return NextResponse.json({ success: true, updated: result.count });
     }
@@ -417,11 +447,32 @@ export async function PATCH(req: NextRequest) {
       updateData.endTime = endTime;
     }
 
+    const previousStatus = appointment.status;
+
     const updated = await prisma.appointment.update({
       where: { id },
       data: updateData,
       include: appointmentInclude,
     });
+
+    // Fire-and-forget: send confirmation SMS on PENDING→CONFIRMED
+    if (validated.status === "CONFIRMED" && previousStatus === "PENDING") {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { name: true, slug: true, assignedTwilioNumber: true },
+      });
+      if (tenant?.assignedTwilioNumber) {
+        const dateStr = formatDateUTC(updated.date);
+        const body = buildConfirmationSmsBody(tenant.name, tenant.slug, dateStr, updated.startTime);
+        sendSmsWithConsent({
+          tenantId: session.user.tenantId,
+          to: updated.customerPhone,
+          from: tenant.assignedTwilioNumber,
+          body,
+          type: "APPOINTMENT_CONFIRMATION",
+        }).catch((err) => console.error("Confirmation SMS error:", err));
+      }
+    }
 
     return NextResponse.json({ success: true, data: enrichAppointment(updated) });
   } catch (error: unknown) {

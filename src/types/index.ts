@@ -113,6 +113,7 @@ export interface TenantData {
   autoConfirmAppointments: boolean;
   facebookUrl: string | null;
   instagramUrl: string | null;
+  mapUrl: string | null;
   heroMediaUrl: string | null;
   heroMediaType: string | null;
   websiteConfig: WebsiteConfig | null;

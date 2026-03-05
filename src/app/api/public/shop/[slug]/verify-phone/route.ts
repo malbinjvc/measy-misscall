@@ -3,7 +3,7 @@ import { randomInt } from "crypto";
 import prisma from "@/lib/prisma";
 import { phoneVerificationSchema } from "@/lib/validations";
 import { sendSms } from "@/lib/sms";
-import { normalizePhoneNumber } from "@/lib/utils";
+import { normalizePhoneNumber, normalizePhoneForStorage } from "@/lib/utils";
 import { hashOtp } from "@/lib/crypto";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -35,7 +35,7 @@ export async function POST(
       );
     }
 
-    const { phone } = parsed.data;
+    const phone = normalizePhoneForStorage(parsed.data.phone);
 
     // Rate limit: max 10 codes per phone in 10 minutes
     const recentCodes = await prisma.phoneVerification.count({
@@ -101,7 +101,8 @@ export async function PUT(
     }
 
     const body = await req.json();
-    const { phone, code } = body;
+    const { code } = body;
+    const phone = body.phone ? normalizePhoneForStorage(body.phone) : "";
 
     if (!phone || !code || typeof code !== "string" || code.length !== 6) {
       return NextResponse.json({ success: false, error: "Invalid verification code" }, { status: 400 });

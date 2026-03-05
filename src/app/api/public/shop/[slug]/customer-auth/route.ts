@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { hashOtp } from "@/lib/crypto";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { signCustomerToken, setCustomerCookie, clearCustomerCookie } from "@/lib/customer-auth";
+import { normalizePhoneForStorage } from "@/lib/utils";
 
 export async function POST(
   req: NextRequest,
@@ -23,7 +24,8 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { phone, code } = body;
+    const { code } = body;
+    const phone = body.phone ? normalizePhoneForStorage(body.phone) : "";
 
     if (!phone || !code || typeof code !== "string" || code.length !== 6) {
       return NextResponse.json({ success: false, error: "Invalid verification code" }, { status: 400 });

@@ -75,6 +75,7 @@ export async function GET(
         logoUrl: tenant.logoUrl,
         facebookUrl: tenant.facebookUrl,
         instagramUrl: tenant.instagramUrl,
+        mapUrl: tenant.mapUrl,
         heroMediaUrl: tenant.heroMediaUrl,
         heroMediaType: tenant.heroMediaType,
         websiteConfig: tenant.websiteConfig,

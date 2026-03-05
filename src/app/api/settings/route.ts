@@ -65,6 +65,7 @@ export async function PATCH(req: NextRequest) {
               description: profileData.description || null,
               facebookUrl: profileData.facebookUrl || null,
               instagramUrl: profileData.instagramUrl || null,
+              mapUrl: profileData.mapUrl || null,
               ...(profileData.autoConfirmAppointments !== undefined && {
                 autoConfirmAppointments: profileData.autoConfirmAppointments,
               }),

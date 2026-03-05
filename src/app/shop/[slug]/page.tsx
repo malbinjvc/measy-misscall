@@ -45,6 +45,7 @@ interface ShopData {
   logoUrl: string | null;
   facebookUrl: string | null;
   instagramUrl: string | null;
+  mapUrl: string | null;
   heroMediaUrl: string | null;
   heroMediaType: string | null;
   websiteConfig: WebsiteConfigType | null;
@@ -323,8 +324,7 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
         slug={params.slug}
         phone={shop.phone}
         address={[shop.address, shop.city, shop.state, shop.zipCode].filter(Boolean).join(", ") || null}
-        menuOpen={menuOpen}
-        onToggleMenu={() => setMenuOpen(!menuOpen)}
+        mapUrl={shop.mapUrl}
       />
 
       {/* Mobile Menu */}
@@ -418,31 +418,29 @@ function ShopHeader({
   slug,
   phone,
   address,
-  menuOpen,
-  onToggleMenu,
+  mapUrl,
   navBar,
 }: {
   name: string;
   slug: string;
   phone: string | null;
   address: string | null;
-  menuOpen: boolean;
-  onToggleMenu: () => void;
+  mapUrl?: string | null;
   navBar?: NavBarConfigType;
 }) {
   const logoHeight = navBar?.logoHeight ?? 36;
   const showName = navBar?.showName ?? true;
   const hasLogo = navBar?.logoUrl;
-  const mapsUrl = address
+  const mapsUrl = mapUrl || (address
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
-    : null;
+    : null);
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b shadow-sm">
       <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-        <button onClick={onToggleMenu} className="p-2 -ml-2 rounded-lg hover:bg-gray-100">
-          {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <Link href={`/shop/${slug}/account`} className="p-2 -ml-2 rounded-lg hover:bg-gray-100">
+          <User className="h-5 w-5 text-primary" />
+        </Link>
         <div className="flex items-center gap-2 mx-4 min-w-0 flex-1 justify-center">
           {hasLogo && (
             navBar.logoType === "video" ? (
@@ -467,9 +465,6 @@ function ShopHeader({
           {showName && <h1 className="text-lg font-bold truncate">{name}</h1>}
         </div>
         <div className="flex items-center gap-1">
-          <Link href={`/shop/${slug}/account`} className="p-2 rounded-lg hover:bg-gray-100">
-            <User className="h-5 w-5 text-primary" />
-          </Link>
           {mapsUrl && (
             <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-gray-100">
               <MapPin className="h-5 w-5 text-primary" />
@@ -1349,9 +1344,9 @@ function ContactSection({ shop }: { shop: ShopData }) {
                   </div>
                 </a>
               )}
-              {shop.address && (
+              {(shop.mapUrl || shop.address) && (
                 <a
-                  href={`https://maps.google.com/?q=${mapQuery}`}
+                  href={shop.mapUrl || `https://maps.google.com/?q=${mapQuery}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
@@ -1976,8 +1971,7 @@ function ConfiguredShopPage({
         slug={slug}
         phone={localShop.phone}
         address={[localShop.address, localShop.city, localShop.state, localShop.zipCode].filter(Boolean).join(", ") || null}
-        menuOpen={menuOpen}
-        onToggleMenu={() => setMenuOpen(!menuOpen)}
+        mapUrl={localShop.mapUrl}
         navBar={config.navBar}
       />
 

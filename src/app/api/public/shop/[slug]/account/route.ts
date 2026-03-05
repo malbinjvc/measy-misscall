@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
 import { getCustomerFromRequest } from "@/lib/customer-auth";
 import { updateCustomerSchema } from "@/lib/validations";
-import { timeStringToMinutes } from "@/lib/utils";
+import { timeStringToMinutes, normalizePhoneForStorage } from "@/lib/utils";
 import { ZodError } from "zod";
 
 export async function GET(
@@ -38,10 +38,16 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Customer not found" }, { status: 404 });
     }
 
+    // Match appointments by exact phone or last-10-digit suffix (handles legacy format differences)
+    const normalizedPhone = normalizePhoneForStorage(customer.phone);
     const appointments = await prisma.appointment.findMany({
       where: {
         tenantId: tenant.id,
-        customerPhone: customer.phone,
+        OR: [
+          { customerPhone: customer.phone },
+          { customerPhone: normalizedPhone },
+          ...(normalizedPhone.length === 10 ? [{ customerPhone: { endsWith: normalizedPhone } }] : []),
+        ],
       },
       orderBy: { date: "desc" },
       include: {

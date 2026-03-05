@@ -16,6 +16,16 @@ export function normalizePhoneNumber(phone: string | null | undefined): string |
   return normalized || null;
 }
 
+/** Strip to last 10 digits for consistent phone storage (handles +1, 1, raw formats) */
+export function normalizePhoneForStorage(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  // For North American numbers: strip country code to get 10-digit number
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  if (digits.length === 10) return digits;
+  // For other formats, return all digits
+  return digits;
+}
+
 export function formatPhoneNumber(phone: string): string {
   const cleaned = phone.replace(/\D/g, "");
   if (cleaned.length === 10) {

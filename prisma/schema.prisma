@@ -148,6 +148,7 @@ model Tenant {
   // Social Media
   facebookUrl         String?
   instagramUrl        String?
+  mapUrl              String?
 
   // Hero Media
   heroMediaUrl        String?
@@ -279,6 +280,7 @@ model Appointment {
   vehicleModel   String?
   appointmentPreference  AppointmentPreference?
   smsConsent      Boolean           @default(false)
+  reminderSentAt  DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 

@@ -35,6 +35,7 @@ export const businessProfileSchema = z.object({
   description: z.string().optional(),
   facebookUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
   instagramUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
+  mapUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
   businessPhoneNumber: z.string().min(10, "Business phone number is required"),
   autoConfirmAppointments: z.boolean().optional(),
 });

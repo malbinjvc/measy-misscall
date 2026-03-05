@@ -99,6 +99,7 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
     autoConfirmAppointments: tenant?.autoConfirmAppointments || false,
     facebookUrl: tenant?.facebookUrl || "",
     instagramUrl: tenant?.instagramUrl || "",
+    mapUrl: tenant?.mapUrl || "",
   });
 
   const handleNameChange = (newName: string) => {
@@ -179,6 +180,11 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
             <Label>Instagram URL</Label>
             <Input placeholder="https://instagram.com/yourbusiness" value={form.instagramUrl} onChange={(e) => setForm({ ...form, instagramUrl: e.target.value })} />
           </div>
+        </div>
+        <div className="space-y-2">
+          <Label>Map URL</Label>
+          <Input placeholder="https://maps.google.com/?q=your+business" value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value })} />
+          <p className="text-xs text-muted-foreground">Google Maps link for the location icon on your shop page</p>
         </div>
         <Button onClick={() => mutation.mutate({ section: "profile", ...form })} disabled={mutation.isPending}>
           {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}

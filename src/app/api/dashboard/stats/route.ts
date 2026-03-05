@@ -49,12 +49,15 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const from = searchParams.get("from"); // YYYY-MM-DD
     const to = searchParams.get("to");     // YYYY-MM-DD
+    const dateMode = searchParams.get("dateMode") || "scheduled"; // "scheduled" or "created"
 
     const hasRange = from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
 
-    // Appointment date filter — appointment.date is stored as UTC midnight calendar dates
+    // Appointment date filter — switches between booked date and creation date
     const appointmentDateFilter = hasRange
-      ? { date: { gte: new Date(from + "T00:00:00.000Z"), lte: new Date(to + "T23:59:59.999Z") } }
+      ? dateMode === "created"
+        ? { createdAt: { gte: torontoStartOfDay(from), lte: torontoEndOfDay(to) } }
+        : { date: { gte: new Date(from + "T00:00:00.000Z"), lte: new Date(to + "T23:59:59.999Z") } }
       : {};
 
     // Calls and SMS use createdAt (actual timestamps) — filter using Toronto timezone boundaries

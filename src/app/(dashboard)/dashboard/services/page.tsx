@@ -140,7 +140,7 @@ export default function ServicesPage() {
       name: service.name,
       description: service.description || "",
       duration: service.duration,
-      price: service.price || 0,
+      price: Number(service.price) || 0,
       isActive: service.isActive,
     });
     setOptions(

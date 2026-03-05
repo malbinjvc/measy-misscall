@@ -67,16 +67,18 @@ function getDateRange(preset: Preset): { from: string; to: string } | null {
 
 export default function DashboardPage() {
   const [preset, setPreset] = useState<Preset>("this_week");
+  const [dateMode, setDateMode] = useState<"scheduled" | "created">("created");
   const range = useMemo(() => getDateRange(preset), [preset]);
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ["dashboard-stats", preset],
+    queryKey: ["dashboard-stats", preset, dateMode],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (range) {
         params.set("from", range.from);
         params.set("to", range.to);
       }
+      params.set("dateMode", dateMode);
       const url = `/api/dashboard/stats${params.toString() ? `?${params}` : ""}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch stats");
@@ -139,8 +141,8 @@ export default function DashboardPage() {
     <div>
       <h1 className="text-2xl font-bold tracking-tight mb-6">Dashboard</h1>
 
-      {/* Date Filter Presets */}
-      <div className="flex flex-wrap gap-2 mb-6">
+      {/* Date Filter Presets + Date Mode Toggle */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
         {PRESETS.map((p) => (
           <button
             key={p.key}
@@ -154,6 +156,28 @@ export default function DashboardPage() {
             {p.label}
           </button>
         ))}
+        <div className="ml-auto flex items-center rounded-md border border-blue-200 bg-blue-50 p-0.5">
+          <button
+            onClick={() => setDateMode("scheduled")}
+            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              dateMode === "scheduled"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-blue-600 hover:text-blue-800"
+            }`}
+          >
+            Scheduled
+          </button>
+          <button
+            onClick={() => setDateMode("created")}
+            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              dateMode === "created"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-blue-600 hover:text-blue-800"
+            }`}
+          >
+            Created
+          </button>
+        </div>
       </div>
 
       {/* Callback Requests — always visible, not date-filtered */}
