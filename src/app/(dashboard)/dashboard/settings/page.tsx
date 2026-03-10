@@ -12,8 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw, CheckCircle2 } from "lucide-react";
-import { WebsiteBuilder } from "@/components/website-builder";
+import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw, CheckCircle2, Globe, ExternalLink, Copy, XCircle } from "lucide-react";
+
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
@@ -27,7 +27,10 @@ export default function SettingsPage() {
       const json = await res.json();
       return json.data;
     },
+    staleTime: 60000,
   });
+
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const updateMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
@@ -42,7 +45,11 @@ export default function SettingsPage() {
       }
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenant"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenant"] });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    },
   });
 
   if (isLoading) return <LoadingPage />;
@@ -55,20 +62,20 @@ export default function SettingsPage() {
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="hours">Business Hours</TabsTrigger>
           <TabsTrigger value="twilio">Phone</TabsTrigger>
-          <TabsTrigger value="website">Website</TabsTrigger>
+          <TabsTrigger value="domain">Domain</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
-          <ProfileSettings tenant={tenant} mutation={updateMutation} />
+          <ProfileSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
         </TabsContent>
         <TabsContent value="hours">
-          <BusinessHoursSettings tenant={tenant} mutation={updateMutation} />
+          <BusinessHoursSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
         </TabsContent>
         <TabsContent value="twilio">
-          <PhoneSettings tenant={tenant} mutation={updateMutation} />
+          <PhoneSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
         </TabsContent>
-        <TabsContent value="website">
-          <WebsiteBuilder tenant={tenant} mutation={updateMutation} />
+        <TabsContent value="domain">
+          <DomainSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
         </TabsContent>
       </Tabs>
     </div>
@@ -84,7 +91,7 @@ function generateSlug(name: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
+function ProfileSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean }) {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [form, setForm] = useState({
     name: tenant?.name || "",
@@ -97,6 +104,7 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
     zipCode: tenant?.zipCode || "",
     description: tenant?.description || "",
     autoConfirmAppointments: tenant?.autoConfirmAppointments || false,
+    maxConcurrentBookings: tenant?.maxConcurrentBookings || 1,
     facebookUrl: tenant?.facebookUrl || "",
     instagramUrl: tenant?.instagramUrl || "",
     mapUrl: tenant?.mapUrl || "",
@@ -171,6 +179,22 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
             onCheckedChange={(checked) => setForm({ ...form, autoConfirmAppointments: checked })}
           />
         </div>
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="space-y-0.5">
+            <Label>Concurrent booking capacity</Label>
+            <p className="text-sm text-muted-foreground">
+              How many appointments can be booked at the same time slot.
+            </p>
+          </div>
+          <Input
+            type="number"
+            min={1}
+            max={50}
+            value={form.maxConcurrentBookings}
+            onChange={(e) => setForm({ ...form, maxConcurrentBookings: Math.max(1, parseInt(e.target.value) || 1) })}
+            className="w-20"
+          />
+        </div>
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Facebook URL</Label>
@@ -186,16 +210,23 @@ function ProfileSettings({ tenant, mutation }: { tenant: TenantData; mutation: S
           <Input placeholder="https://maps.google.com/?q=your+business" value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value })} />
           <p className="text-xs text-muted-foreground">Google Maps link for the location icon on your shop page</p>
         </div>
-        <Button onClick={() => mutation.mutate({ section: "profile", ...form })} disabled={mutation.isPending}>
-          {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Save Changes
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={() => mutation.mutate({ section: "profile", ...form })} disabled={mutation.isPending}>
+            {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Save Changes
+          </Button>
+          {saveSuccess && (
+            <span className="flex items-center gap-1 text-sm text-green-600">
+              <CheckCircle2 className="h-4 w-4" /> Saved successfully
+            </span>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function BusinessHoursSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
+function BusinessHoursSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean }) {
   const queryClient = useQueryClient();
   const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
   const [hours, setHours] = useState(
@@ -260,10 +291,17 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: TenantData; mutat
             )}
           </div>
         ))}
-        <Button onClick={handleSave} disabled={mutation.isPending}>
-          {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Save Hours
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={handleSave} disabled={mutation.isPending}>
+            {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Save Hours
+          </Button>
+          {saveSuccess && (
+            <span className="flex items-center gap-1 text-sm text-green-600">
+              <CheckCircle2 className="h-4 w-4" /> Saved successfully
+            </span>
+          )}
+        </div>
         {affectedWarning !== null && affectedWarning > 0 && (
           <div className="flex items-start gap-2 rounded-lg border border-orange-300 bg-orange-50 p-3">
             <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
@@ -278,7 +316,7 @@ function BusinessHoursSettings({ tenant, mutation }: { tenant: TenantData; mutat
   );
 }
 
-function PhoneSettings({ tenant, mutation }: { tenant: TenantData; mutation: SettingsMutation }) {
+function PhoneSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     businessPhoneNumber: tenant?.businessPhoneNumber || "",
@@ -430,6 +468,224 @@ function PhoneSettings({ tenant, mutation }: { tenant: TenantData; mutation: Set
           {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Save Phone Settings
         </Button>
+        {saveSuccess && (
+          <span className="flex items-center gap-1 text-sm text-green-600 mt-2">
+            <CheckCircle2 className="h-4 w-4" /> Saved successfully
+          </span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DomainSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean }) {
+  const [domain, setDomain] = useState(tenant?.customDomain || "");
+  const [saveError, setSaveError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ verified: boolean; message?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const isVerified = tenant?.customDomainVerified === true;
+  const hasDomain = !!tenant?.customDomain;
+  const appHost = typeof window !== "undefined"
+    ? new URL(process.env.NEXT_PUBLIC_APP_URL || window.location.origin).hostname
+    : "yourapp.com";
+
+  const handleSave = () => {
+    setSaveError("");
+    setVerifyResult(null);
+    mutation.mutate(
+      { section: "domain", customDomain: domain || null },
+      {
+        onError: (err: Error) => setSaveError(err.message || "Failed to save domain."),
+      }
+    );
+  };
+
+  const handleRemove = () => {
+    setSaveError("");
+    setVerifyResult(null);
+    setDomain("");
+    mutation.mutate(
+      { section: "domain", customDomain: null },
+      {
+        onError: (err: Error) => setSaveError(err.message || "Failed to remove domain."),
+      }
+    );
+  };
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await fetch("/api/settings/verify-domain", { method: "POST" });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setVerifyResult(json.data);
+      } else {
+        setVerifyResult({ verified: false, message: json.error || "Verification failed" });
+      }
+    } catch {
+      setVerifyResult({ verified: false, message: "Network error. Please try again." });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="h-5 w-5" /> Custom Domain
+        </CardTitle>
+        <CardDescription>
+          Use your own domain for your public booking page instead of the default URL.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Current status */}
+        {hasDomain && (
+          <div className={`rounded-lg border p-4 flex items-center gap-3 ${
+            isVerified
+              ? "border-green-200 bg-green-50"
+              : "border-amber-200 bg-amber-50"
+          }`}>
+            {isVerified ? (
+              <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            )}
+            <div>
+              <p className={`text-sm font-medium ${isVerified ? "text-green-900" : "text-amber-900"}`}>
+                {isVerified ? "Domain verified and active" : "Domain pending verification"}
+              </p>
+              <p className={`text-sm font-mono ${isVerified ? "text-green-800" : "text-amber-800"}`}>
+                {tenant.customDomain}
+              </p>
+            </div>
+            {isVerified && (
+              <a
+                href={`https://${tenant.customDomain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto text-green-600 hover:text-green-700"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Domain input */}
+        <div className="space-y-2">
+          <Label>Domain</Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder="booking.yourbusiness.com"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value.toLowerCase().trim())}
+              className="flex-1"
+            />
+            <Button onClick={handleSave} disabled={mutation.isPending || !domain}>
+              {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Enter a subdomain like <span className="font-mono">booking.yourbusiness.com</span> or a root domain like <span className="font-mono">yourbusiness.com</span>
+          </p>
+        </div>
+
+        {/* DNS instructions - show after domain is saved */}
+        {hasDomain && !isVerified && (
+          <div className="rounded-lg border bg-muted/50 p-4 space-y-3">
+            <p className="text-sm font-medium">DNS Configuration Required</p>
+            <p className="text-sm text-muted-foreground">
+              Add the following CNAME record at your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.):
+            </p>
+            <div className="rounded-md border bg-background p-3 space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-xs font-medium text-muted-foreground">
+                <span>Type</span>
+                <span>Name</span>
+                <span>Value</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm font-mono">
+                <span>CNAME</span>
+                <span className="truncate">{tenant.customDomain}</span>
+                <div className="flex items-center gap-1">
+                  <span className="truncate">{appHost}</span>
+                  <button
+                    onClick={() => copyToClipboard(appHost)}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    title="Copy"
+                  >
+                    {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              DNS changes can take up to 48 hours to propagate. Once configured, click &ldquo;Verify&rdquo; below.
+            </p>
+            <Button variant="outline" size="sm" onClick={handleVerify} disabled={verifying}>
+              {verifying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Verify DNS
+            </Button>
+            {verifyResult && (
+              <div className={`flex items-start gap-2 rounded-lg border p-3 ${
+                verifyResult.verified
+                  ? "border-green-300 bg-green-50"
+                  : "border-red-300 bg-red-50"
+              }`}>
+                {verifyResult.verified ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                )}
+                <p className={`text-sm ${verifyResult.verified ? "text-green-700" : "text-red-700"}`}>
+                  {verifyResult.verified ? "Domain verified successfully!" : (verifyResult.message || "DNS records not found yet.")}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Remove domain button */}
+        {hasDomain && (
+          <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={handleRemove} disabled={mutation.isPending}>
+            <XCircle className="mr-2 h-4 w-4" /> Remove Domain
+          </Button>
+        )}
+
+        {/* Save error */}
+        {saveError && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+            <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-red-700">{saveError}</p>
+          </div>
+        )}
+
+        {saveSuccess && (
+          <span className="flex items-center gap-1 text-sm text-green-600">
+            <CheckCircle2 className="h-4 w-4" /> Saved successfully
+          </span>
+        )}
+
+        {/* How it works */}
+        <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+          <p className="text-sm font-medium">How custom domains work</p>
+          <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+            <li>Your booking page will be accessible at <span className="font-mono">https://yourdomain.com</span></li>
+            <li>The dashboard and admin pages remain on the main app domain</li>
+            <li>SSL certificates are provisioned automatically</li>
+            <li>All existing booking links continue to work</li>
+          </ul>
+        </div>
       </CardContent>
     </Card>
   );

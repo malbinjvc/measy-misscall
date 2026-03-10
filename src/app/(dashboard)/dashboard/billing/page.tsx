@@ -18,6 +18,7 @@ export default function BillingPage() {
       const json = await res.json();
       return json.data;
     },
+    staleTime: 60000,
   });
 
   async function openPortal() {

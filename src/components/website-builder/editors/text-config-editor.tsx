@@ -55,6 +55,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
             min={8}
             max={200}
             className="h-8 text-xs"
+            title="Text size in pixels (8-200)"
           />
         </div>
       </div>
@@ -67,6 +68,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
             value={value.fontWeight}
             onChange={(e) => update({ fontWeight: Number(e.target.value) })}
             className="w-full h-8 rounded-md border px-2 text-xs bg-background"
+            title="Text thickness (100=thin, 700=bold, 900=black)"
           >
             {[100, 200, 300, 400, 500, 600, 700, 800, 900].map((w) => (
               <option key={w} value={w}>{w}</option>
@@ -106,6 +108,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
             onChange={(e) => update({ letterSpacing: Number(e.target.value) })}
             step={0.5}
             className="h-8 text-xs"
+            title="Space between letters in pixels"
           />
         </div>
         <div className="space-y-1">
@@ -118,6 +121,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
             min={0.5}
             max={4}
             className="h-8 text-xs"
+            title="Space between lines (1=tight, 2=double-spaced)"
           />
         </div>
       </div>
@@ -132,7 +136,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
               update({ textShadow: { ...shadow, enabled } });
             }}
           />
-          <Label className="text-xs">Text Shadow</Label>
+          <Label className="text-xs" title="Add a shadow behind the text">Text Shadow</Label>
         </div>
         {value.textShadow?.enabled && (
           <div className="grid grid-cols-3 gap-2 pl-4">
@@ -162,7 +166,7 @@ export function TextConfigEditor({ label, value, onChange, multiline }: TextConf
               update({ gradient: { ...gradient, enabled } });
             }}
           />
-          <Label className="text-xs">Gradient Text</Label>
+          <Label className="text-xs" title="Apply a gradient color effect to the text">Gradient Text</Label>
         </div>
         {value.gradient?.enabled && (
           <div className="grid grid-cols-2 gap-2 pl-4">

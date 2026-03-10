@@ -14,6 +14,7 @@ interface MediaUploaderProps {
 
 export function MediaUploader({ label, mediaUrl, mediaType, onMediaChange }: MediaUploaderProps) {
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -23,14 +24,36 @@ export function MediaUploader({ label, mediaUrl, mediaType, onMediaChange }: Med
 
     setError("");
     setUploading(true);
+    setUploadProgress(0);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      const res = await fetch("/api/uploads", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.success) {
+      const data = await new Promise<{ success: boolean; data?: { url: string; mediaType: "image" | "video" }; error?: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/uploads");
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            setUploadProgress(Math.round((event.loaded / event.total) * 100));
+          }
+        };
+
+        xhr.onload = () => {
+          try {
+            const json = JSON.parse(xhr.responseText);
+            resolve(json);
+          } catch {
+            reject(new Error("Invalid response"));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("Network error"));
+        xhr.send(formData);
+      });
+
+      if (data.success && data.data) {
         onMediaChange(data.data.url, data.data.mediaType);
       } else {
         setError(data.error || "Upload failed");
@@ -39,6 +62,7 @@ export function MediaUploader({ label, mediaUrl, mediaType, onMediaChange }: Med
       setError("Network error");
     } finally {
       setUploading(false);
+      setUploadProgress(0);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -49,11 +73,14 @@ export function MediaUploader({ label, mediaUrl, mediaType, onMediaChange }: Med
       {!mediaUrl ? (
         <div className="space-y-2">
           <div
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => !uploading && fileInputRef.current?.click()}
             className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors"
           >
             {uploading ? (
-              <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+              <div className="space-y-2">
+                <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">{uploadProgress}%</p>
+              </div>
             ) : (
               <>
                 <Upload className="h-6 w-6 text-muted-foreground mx-auto mb-1" />
@@ -61,6 +88,14 @@ export function MediaUploader({ label, mediaUrl, mediaType, onMediaChange }: Med
               </>
             )}
           </div>
+          {uploading && (
+            <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"

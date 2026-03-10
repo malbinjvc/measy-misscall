@@ -66,6 +66,22 @@ enum SmsType {
   APPOINTMENT_REMINDER
   OTP_VERIFICATION
   CUSTOM
+  CAMPAIGN
+}
+
+enum CampaignStatus {
+  DRAFT
+  SENDING
+  COMPLETED
+  FAILED
+}
+
+enum CampaignRecipientStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
 }
 
 enum SubscriptionStatus {
@@ -94,6 +110,20 @@ enum OnboardingStep {
   REVIEW
 }
 
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 // ─── Models ──────────────────────────────────────────
 
 model User {
@@ -105,10 +135,11 @@ model User {
   role           UserRole  @default(TENANT_OWNER)
   emailVerified  DateTime?
   image          String?
-  tenantId       String?
-  tenant         Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  tenantId               String?
+  tenant                 Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  impersonatingTenantId  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@index([tenantId])
   @@index([email])
@@ -144,6 +175,7 @@ model Tenant {
 
   // Appointment Settings
   autoConfirmAppointments Boolean @default(false)
+  maxConcurrentBookings   Int     @default(1) // concurrent bookings per time slot
 
   // Social Media
   facebookUrl         String?
@@ -157,6 +189,10 @@ model Tenant {
   // Website Builder
   websiteConfig       Json?
 
+  // Custom Domain (white-label)
+  customDomain         String?  @unique
+  customDomainVerified Boolean  @default(false)
+
   // Relations
   users               User[]
   services            Service[]
@@ -167,6 +203,9 @@ model Tenant {
   subscription        Subscription?
   reviews             Review[]
   customers           Customer[]
+  supportTickets      SupportTicket[]
+  wallet              Wallet?
+  campaigns           Campaign[]
 
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -249,7 +288,10 @@ model Call {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  @@index([tenantId])
+  // tenantId is leading column in all compound indexes below — no standalone @@index([tenantId]) needed
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+  @@index([tenantId, ivrResponse, callbackHandled])
   @@index([callerNumber])
   @@index([createdAt])
   @@index([status])
@@ -284,9 +326,14 @@ model Appointment {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  @@index([tenantId])
-  @@index([date])
-  @@index([status])
+  // tenantId is leading column in compound indexes — no standalone @@index([tenantId]) needed
+  // (tenantId, date) is prefix of (tenantId, date, status) — no standalone needed
+  @@index([tenantId, status])
+  @@index([tenantId, date, status])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, customerPhone])
+  @@index([status, reminderSentAt, date]) // cron reminder query: status + no reminder + date range
+  @@index([date])                         // cross-tenant date range queries (cron fallback)
   @@index([customerPhone])
 }
 
@@ -326,7 +373,9 @@ model SmsLog {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  @@index([tenantId])
+  // tenantId is leading column in compound indexes — no standalone @@index([tenantId]) needed
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
   @@index([callId])
   @@index([status])
 }
@@ -400,6 +449,11 @@ model PlatformSettings {
   // ElevenLabs TTS
   elevenlabsApiKey      String?
   elevenlabsVoiceId     String?
+  // Dashboard Banner (shown on tenant overview page)
+  dashboardBannerUrl    String?
+  dashboardBannerType   String?  @default("image") // "image" or "video"
+  dashboardBannerLink   String?
+  dashboardBannerEnabled Boolean @default(false)
   // General
   maintenanceMode       Boolean  @default(false)
   createdAt             DateTime @default(now())
@@ -411,15 +465,17 @@ model Review {
   tenantId        String
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customerName    String
-  customerPhone   String
+  customerPhone   String?
   rating          Int      // 1-5
   comment         String?
   imageUrl        String?
+  imageUrls       String[]
+  importSource    String?
   isVerified      Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  @@index([tenantId])
+  @@index([tenantId, isVerified, createdAt]) // public reviews query: tenant + verified + order by date
   @@index([rating])
 }
 
@@ -432,6 +488,8 @@ model PhoneVerification {
   createdAt DateTime @default(now())
 
   @@index([phone, code])
+  @@index([phone, createdAt])
+  @@index([expiresAt, verified]) // cleanup cron: find expired + unverified records
 }
 
 model TwilioCleanupQueue {
@@ -468,8 +526,7 @@ model Customer {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  @@unique([tenantId, phone])
-  @@index([tenantId])
+  @@unique([tenantId, phone]) // unique constraint creates index with tenantId as leading column
   @@index([phone])
 }
 
@@ -488,6 +545,74 @@ model CustomerVehicle {
   @@index([customerId])
 }
 
+model SupportTicket {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subject     String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  lastReadByAdmin  DateTime?
+  lastReadByTenant DateTime?
+  messages    TicketMessage[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([tenantId, status, updatedAt]) // tenant ticket list: filter by tenant + status, order by updatedAt
+  @@index([status, updatedAt])           // admin ticket list: filter by status, order by updatedAt
+  @@index([createdAt])
+}
+
+model TicketMessage {
+  id              String        @id @default(cuid())
+  ticketId        String
+  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderRole      String        // "TENANT" or "ADMIN"
+  senderName      String
+  message         String
+  attachmentUrls  String[]
+  attachmentNames String[]
+  createdAt       DateTime      @default(now())
+
+  @@index([ticketId, createdAt]) // unread count queries: messages per ticket ordered by date
+}
+
+model Wallet {
+  id                String              @id @default(cuid())
+  tenantId          String              @unique
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  balance           Decimal             @default(0) @db.Decimal(10, 4)
+  autoRecharge      Boolean             @default(true)
+  rechargeThreshold Decimal             @default(10) @db.Decimal(10, 2)
+  rechargeAmount    Decimal             @default(50) @db.Decimal(10, 2)
+  // Atomic usage counters — reset each billing period
+  usedSms           Int                 @default(0)
+  usedCalls         Int                 @default(0)
+  periodStart       DateTime?           // tracks which period the counters belong to
+  // Prevent concurrent auto-recharges
+  recharging        Boolean             @default(false)
+  transactions      WalletTransaction[]
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([tenantId])
+}
+
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type        String   // "RECHARGE", "SMS_CHARGE", "CALL_CHARGE", "INITIAL_LOAD", "MANUAL_RECHARGE"
+  amount      Decimal  @db.Decimal(10, 4) // positive for credits, negative for charges
+  balance     Decimal  @db.Decimal(10, 4) // balance after transaction
+  description String?
+  stripePaymentIntentId String?
+  createdAt   DateTime @default(now())
+
+  @@index([walletId])
+  @@index([createdAt])
+}
+
 model AdminLog {
   id         String   @id @default(cuid())
   action     String                        // e.g. "TENANT_DELETED", "TWILIO_NUMBER_RELEASED"
@@ -503,4 +628,37 @@ model AdminLog {
   @@index([tenantId])
   @@index([action])
   @@index([createdAt])
+}
+
+model Campaign {
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  message         String
+  status          CampaignStatus   @default(DRAFT)
+  recipientCount  Int              @default(0)
+  sentCount       Int              @default(0)
+  failedCount     Int              @default(0)
+  createdAt       DateTime         @default(now())
+  sentAt          DateTime?
+  completedAt     DateTime?
+  recipients      CampaignRecipient[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+}
+
+model CampaignRecipient {
+  id           String                   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customerName String?
+  phone        String
+  status       CampaignRecipientStatus  @default(PENDING)
+  smsLogId     String?
+  errorMessage String?
+  sentAt       DateTime?
+
+  @@index([campaignId, status])
 }

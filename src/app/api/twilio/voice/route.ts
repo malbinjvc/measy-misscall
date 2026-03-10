@@ -3,21 +3,31 @@ import prisma from "@/lib/prisma";
 import { buildIvrResponse, buildErrorResponse } from "@/lib/twiml";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { getSharedAudioUrl } from "@/lib/elevenlabs";
-import { verifyTwilioWebhook } from "@/lib/twilio";
+import { validateTwilioSignature } from "@/lib/twilio";
 
 export async function POST(req: NextRequest) {
   try {
-    // Validate Twilio webhook signature
-    const isValid = await verifyTwilioWebhook(req);
+    // Parse form data once — reuse for verification and data extraction
+    const formData = await req.formData();
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => { params[key] = value.toString(); });
+
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) return new NextResponse("Forbidden", { status: 403 });
+
+    const internalUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || internalUrl.origin;
+    const url = baseUrl + internalUrl.pathname + internalUrl.search;
+
+    const isValid = await validateTwilioSignature(signature, url, params);
     if (!isValid) {
       console.warn("Invalid Twilio signature on /api/twilio/voice");
       return new NextResponse("Forbidden", { status: 403 });
     }
 
-    const formData = await req.formData();
-    const to = normalizePhoneNumber(formData.get("To") as string);
-    const from = formData.get("From") as string;
-    const callSid = formData.get("CallSid") as string;
+    const to = normalizePhoneNumber(params.To);
+    const from = params.From;
+    const callSid = params.CallSid;
 
     // Find tenant by assigned Twilio number (normalized E.164)
     const tenant = to
@@ -30,7 +40,7 @@ export async function POST(req: NextRequest) {
       : null;
 
     if (!tenant) {
-      console.error(`No active tenant found for Twilio number: ${to} (raw: ${formData.get("To")})`);
+      console.error(`No active tenant found for Twilio number: ${to} (raw: ${params.To})`);
       return new NextResponse(buildErrorResponse(getSharedAudioUrl("error")), {
         headers: { "Content-Type": "text/xml" },
       });
@@ -47,6 +57,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Play IVR directly — no Dial step needed
+    // Call charges are handled in /api/twilio/call-status based on actual duration
     const gatherUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/gather?callId=${call.id}`;
     const twiml = buildIvrResponse(
       gatherUrl,

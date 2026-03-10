@@ -9,13 +9,17 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, CheckCircle2, XCircle, Phone, MessageSquare, Volume2 } from "lucide-react";
+import { Loader2, Save, CheckCircle2, XCircle, Phone, MessageSquare, Volume2, Image, Trash2 } from "lucide-react";
 
 interface PlatformSettings {
   sharedTwilioSid: string | null;
   sharedTwilioToken: string | null;
   elevenlabsApiKey: string | null;
   elevenlabsVoiceId: string | null;
+  dashboardBannerUrl: string | null;
+  dashboardBannerType: string | null;
+  dashboardBannerLink: string | null;
+  dashboardBannerEnabled: boolean;
   maintenanceMode: boolean;
 }
 
@@ -24,6 +28,10 @@ interface SettingsFormData {
   sharedTwilioToken: string;
   elevenlabsApiKey: string;
   elevenlabsVoiceId: string;
+  dashboardBannerUrl: string | null;
+  dashboardBannerType: string;
+  dashboardBannerLink: string;
+  dashboardBannerEnabled: boolean;
   maintenanceMode: boolean;
 }
 
@@ -40,6 +48,7 @@ export default function AdminSettingsPage() {
       const json = await res.json();
       return json.data;
     },
+    staleTime: 60000,
   });
 
   const mutation = useMutation({
@@ -69,8 +78,13 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
     sharedTwilioToken: settings.sharedTwilioToken || "",
     elevenlabsApiKey: settings.elevenlabsApiKey || "",
     elevenlabsVoiceId: settings.elevenlabsVoiceId || "",
+    dashboardBannerUrl: settings.dashboardBannerUrl || null as string | null,
+    dashboardBannerType: settings.dashboardBannerType || "image",
+    dashboardBannerLink: settings.dashboardBannerLink || "",
+    dashboardBannerEnabled: settings.dashboardBannerEnabled || false,
     maintenanceMode: settings.maintenanceMode || false,
   });
+  const [bannerUploading, setBannerUploading] = useState(false);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState("");
 
@@ -265,6 +279,120 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
               </div>
               <p className="text-sm text-amber-800">
                 Hi from <span className="font-semibold">[Business Name]</span>! We received your callback request. Our team will get back to you shortly. Thank you for your patience!
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Dashboard Banner */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Image className="h-5 w-5" /> Dashboard Banner
+                </CardTitle>
+                <CardDescription>Show a promotional banner on all tenant dashboard overview pages</CardDescription>
+              </div>
+              <Switch
+                checked={form.dashboardBannerEnabled}
+                onCheckedChange={(checked) => setForm((prev) => ({ ...prev, dashboardBannerEnabled: checked }))}
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Upload / Preview */}
+            <div className="space-y-2">
+              <Label>Banner Media</Label>
+              {form.dashboardBannerUrl ? (
+                <div className="space-y-2">
+                  <div className="relative rounded-lg overflow-hidden border bg-muted" style={{ maxHeight: 220 }}>
+                    {form.dashboardBannerType === "video" ? (
+                      <video
+                        src={form.dashboardBannerUrl}
+                        muted
+                        loop
+                        autoPlay
+                        playsInline
+                        className="w-full h-full object-cover"
+                        style={{ maxHeight: 220 }}
+                      />
+                    ) : (
+                      <img
+                        src={form.dashboardBannerUrl}
+                        alt="Banner preview"
+                        className="w-full h-full object-cover"
+                        style={{ maxHeight: 220 }}
+                      />
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setForm((prev) => ({ ...prev, dashboardBannerUrl: null, dashboardBannerType: "image" }))}
+                  >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" /> Remove
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    type="file"
+                    accept="image/*,video/mp4,video/webm"
+                    className="hidden"
+                    id="banner-upload"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setBannerUploading(true);
+                      try {
+                        const fd = new FormData();
+                        fd.append("file", file);
+                        const res = await fetch("/api/uploads", { method: "POST", body: fd });
+                        const json = await res.json();
+                        if (json.success) {
+                          const isVideo = file.type.startsWith("video/");
+                          setForm((prev) => ({
+                            ...prev,
+                            dashboardBannerUrl: json.data.url,
+                            dashboardBannerType: isVideo ? "video" : "image",
+                          }));
+                        }
+                      } catch {
+                        // upload failed silently
+                      } finally {
+                        setBannerUploading(false);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                  <label
+                    htmlFor="banner-upload"
+                    className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors"
+                  >
+                    {bannerUploading ? (
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      <>
+                        <Image className="h-8 w-8 text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">Click to upload image or video</span>
+                      </>
+                    )}
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {/* Link (optional) */}
+            <div className="space-y-2">
+              <Label>Link URL <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input
+                value={form.dashboardBannerLink}
+                onChange={(e) => setForm((prev) => ({ ...prev, dashboardBannerLink: e.target.value }))}
+                placeholder="https://example.com/promo"
+              />
+              <p className="text-xs text-muted-foreground">
+                If set, clicking the banner will open this link in a new tab.
               </p>
             </div>
           </CardContent>

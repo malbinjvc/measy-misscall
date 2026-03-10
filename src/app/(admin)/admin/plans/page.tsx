@@ -51,6 +51,7 @@ export default function AdminPlansPage() {
       if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
+    staleTime: 60000,
   });
 
   const createMutation = useMutation({

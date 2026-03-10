@@ -8,6 +8,8 @@ import type {
   SectionElement,
 } from "@/types";
 
+const MAX_HISTORY = 20;
+
 type Action =
   | { type: "SET_CONFIG"; config: WebsiteConfig }
   | { type: "UPDATE_THEME"; theme: Partial<WebsiteTheme> }
@@ -20,7 +22,16 @@ type Action =
   | { type: "ADD_ELEMENT"; sectionId: string; element: SectionElement }
   | { type: "REMOVE_ELEMENT"; sectionId: string; elementId: string }
   | { type: "UPDATE_ELEMENT"; sectionId: string; elementId: string; updates: Partial<SectionElement> }
-  | { type: "REORDER_ELEMENTS"; sectionId: string; elementIds: string[] };
+  | { type: "REORDER_ELEMENTS"; sectionId: string; elementIds: string[] }
+  | { type: "DUPLICATE_SECTION"; id: string }
+  | { type: "UNDO" }
+  | { type: "REDO" };
+
+interface HistoryState {
+  config: WebsiteConfig;
+  past: WebsiteConfig[];
+  future: WebsiteConfig[];
+}
 
 function updateCustomSection(
   state: WebsiteConfig,
@@ -38,7 +49,7 @@ function updateCustomSection(
   };
 }
 
-function reducer(state: WebsiteConfig, action: Action): WebsiteConfig {
+function applyConfigAction(state: WebsiteConfig, action: Action): WebsiteConfig {
   switch (action.type) {
     case "SET_CONFIG":
       return action.config;
@@ -104,13 +115,68 @@ function reducer(state: WebsiteConfig, action: Action): WebsiteConfig {
         return { ...s, elements: reordered };
       });
 
+    case "DUPLICATE_SECTION": {
+      const idx = state.sections.findIndex((s) => s.id === action.id);
+      if (idx === -1) return state;
+      const original = state.sections[idx];
+      if (original.type !== "custom") return state;
+      const cloned: CustomSectionConfig = {
+        ...JSON.parse(JSON.stringify(original)),
+        id: `custom-${Date.now()}`,
+        name: `${original.name} (Copy)`,
+      };
+      const newSections = [...state.sections];
+      newSections.splice(idx + 1, 0, cloned);
+      return { ...state, sections: newSections };
+    }
+
     default:
       return state;
   }
 }
 
+function historyReducer(state: HistoryState, action: Action): HistoryState {
+  if (action.type === "UNDO") {
+    if (state.past.length === 0) return state;
+    const previous = state.past[state.past.length - 1];
+    return {
+      config: previous,
+      past: state.past.slice(0, -1),
+      future: [state.config, ...state.future],
+    };
+  }
+
+  if (action.type === "REDO") {
+    if (state.future.length === 0) return state;
+    const next = state.future[0];
+    return {
+      config: next,
+      past: [...state.past, state.config],
+      future: state.future.slice(1),
+    };
+  }
+
+  // All other actions: apply to config and push to history
+  const newConfig = applyConfigAction(state.config, action);
+  if (newConfig === state.config) return state;
+
+  return {
+    config: newConfig,
+    past: [...state.past, state.config].slice(-MAX_HISTORY),
+    future: [],
+  };
+}
+
 export function useWebsiteConfig(initial: WebsiteConfig) {
-  const [config, dispatch] = useReducer(reducer, initial);
+  const [state, dispatch] = useReducer(historyReducer, {
+    config: initial,
+    past: [],
+    future: [],
+  });
+
+  const { config } = state;
+  const canUndo = state.past.length > 0;
+  const canRedo = state.future.length > 0;
 
   const setConfig = useCallback((c: WebsiteConfig) => dispatch({ type: "SET_CONFIG", config: c }), []);
   const updateTheme = useCallback((theme: Partial<WebsiteTheme>) => dispatch({ type: "UPDATE_THEME", theme }), []);
@@ -126,6 +192,7 @@ export function useWebsiteConfig(initial: WebsiteConfig) {
     (sectionIds: string[]) => dispatch({ type: "REORDER_SECTIONS", sectionIds }),
     []
   );
+  const duplicateSection = useCallback((id: string) => dispatch({ type: "DUPLICATE_SECTION", id }), []);
 
   // Element CRUD
   const addElement = useCallback(
@@ -146,6 +213,9 @@ export function useWebsiteConfig(initial: WebsiteConfig) {
     []
   );
 
+  const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
+  const redo = useCallback(() => dispatch({ type: "REDO" }), []);
+
   return {
     config,
     setConfig,
@@ -156,9 +226,14 @@ export function useWebsiteConfig(initial: WebsiteConfig) {
     removeSection,
     toggleSection,
     reorderSections,
+    duplicateSection,
     addElement,
     removeElement,
     updateElement,
     reorderElements,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
   };
 }

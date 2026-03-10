@@ -6,6 +6,8 @@ import type {
   ReviewsSectionConfig,
   ServicesSectionConfig,
   CustomSectionConfig,
+  ReelSectionConfig,
+  ReelCard,
   TextElement,
   MediaElement,
   TextOverMediaElement,
@@ -145,6 +147,29 @@ export function createDefaultCustomSection(): CustomSectionConfig {
   };
 }
 
+// ─── Reel Section Factories ─────────────────────────
+
+export function createDefaultReelCard(index: number): ReelCard {
+  return {
+    id: `reel-card-${Date.now()}-${index}`,
+    mediaUrl: null,
+    mediaType: "image",
+    headline: { ...DEFAULT_TEXT, content: "", fontSize: 24, fontWeight: 700, color: "#ffffff", alignment: "center" },
+    subtitle: { ...DEFAULT_TEXT, content: "", fontSize: 14, color: "#ffffff", alignment: "center" },
+    overlay: { ...DEFAULT_OVERLAY },
+  };
+}
+
+export function createDefaultReelSection(): ReelSectionConfig {
+  return {
+    type: "reel",
+    id: `reel-${Date.now()}`,
+    visible: true,
+    name: "Reels",
+    cards: Array.from({ length: 5 }, (_, i) => createDefaultReelCard(i)),
+  };
+}
+
 // ─── Default Config ─────────────────────────────────
 
 export function createDefaultConfig(
@@ -186,4 +211,5 @@ export const SECTION_TYPE_LABELS: Record<string, string> = {
   reviews: "Reviews",
   services: "Services",
   custom: "Custom Section",
+  reel: "Reels",
 };

@@ -22,7 +22,7 @@ export function ColorPicker({ label, value, onChange, showOpacity, opacity, onOp
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-8 h-8 rounded border cursor-pointer"
+          className="w-10 h-10 rounded border cursor-pointer"
         />
         <Input
           value={value}
@@ -31,12 +31,12 @@ export function ColorPicker({ label, value, onChange, showOpacity, opacity, onOp
           placeholder="#000000"
         />
       </div>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-2">
         {COLOR_PRESETS.map((preset) => (
           <button
             key={preset}
             onClick={() => onChange(preset)}
-            className="w-5 h-5 rounded-sm border border-gray-200 hover:scale-110 transition-transform"
+            className="w-8 h-8 rounded-md border border-gray-200 hover:scale-110 transition-transform"
             style={{ backgroundColor: preset }}
             title={preset}
           />

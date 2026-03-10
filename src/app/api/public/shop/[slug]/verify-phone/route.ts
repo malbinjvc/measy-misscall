@@ -37,15 +37,17 @@ export async function POST(
 
     const phone = normalizePhoneForStorage(parsed.data.phone);
 
-    // Rate limit: max 10 codes per phone in 10 minutes
-    const recentCodes = await prisma.phoneVerification.count({
+    // Rate limit: max 10 codes per phone in 10 minutes (bounded query, not COUNT)
+    const recentCodes = await prisma.phoneVerification.findMany({
       where: {
         phone,
         createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
       },
+      select: { id: true },
+      take: 11,
     });
 
-    if (recentCodes >= 10) {
+    if (recentCodes.length >= 10) {
       return NextResponse.json(
         { success: false, error: "Too many verification attempts. Please try again later." },
         { status: 429 }
@@ -67,13 +69,20 @@ export async function POST(
 
     // Send SMS via Twilio
     const fromNumber = normalizePhoneNumber(tenant.assignedTwilioNumber) || undefined;
-    await sendSms({
+    const smsResult = await sendSms({
       tenantId: tenant.id,
       to: phone,
       from: fromNumber,
       body: `Your verification code for ${tenant.name} is: ${code}. It expires in 10 minutes.`,
       type: "OTP_VERIFICATION",
     });
+
+    if (!smsResult.success) {
+      return NextResponse.json(
+        { success: false, error: "Failed to send verification code. Please try again." },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -110,17 +119,19 @@ export async function PUT(
 
     const hashedCode = hashOtp(code);
 
-    // Find a matching, unexpired, unverified code for this phone
-    const record = await prisma.phoneVerification.findFirst({
+    // Check that a valid, unused code exists — do NOT consume it here.
+    // The booking route will atomically claim the code to prevent reuse.
+    const match = await prisma.phoneVerification.findFirst({
       where: {
         phone,
         code: hashedCode,
         verified: false,
         expiresAt: { gte: new Date() },
       },
+      select: { id: true },
     });
 
-    if (!record) {
+    if (!match) {
       return NextResponse.json({ success: false, error: "Invalid or expired verification code" }, { status: 400 });
     }
 

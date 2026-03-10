@@ -4,19 +4,31 @@ import { buildThankYouResponse, buildErrorResponse } from "@/lib/twiml";
 import { sendSms, buildBookingSmsBody, buildCallbackSmsBody } from "@/lib/sms";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { getSharedAudioUrl } from "@/lib/elevenlabs";
-import { verifyTwilioWebhook } from "@/lib/twilio";
+import { validateTwilioSignature } from "@/lib/twilio";
 
 export async function POST(req: NextRequest) {
   try {
-    // Validate Twilio webhook signature
-    const isValid = await verifyTwilioWebhook(req);
+    // Parse form data once — reuse for verification and data extraction
+    const formData = await req.formData();
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => { params[key] = value.toString(); });
+
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
+    const internalUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || internalUrl.origin;
+    const url = baseUrl + internalUrl.pathname + internalUrl.search;
+
+    const isValid = await validateTwilioSignature(signature, url, params);
     if (!isValid) {
       console.warn("Invalid Twilio signature on /api/twilio/gather");
       return new NextResponse("Forbidden", { status: 403 });
     }
 
-    const formData = await req.formData();
-    const digits = formData.get("Digits") as string;
+    const digits = params.Digits;
     const callId = req.nextUrl.searchParams.get("callId");
 
     if (!callId) {

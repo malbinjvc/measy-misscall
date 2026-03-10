@@ -158,6 +158,8 @@ export async function POST(req: NextRequest) {
       phoneNumber,
       voiceUrl: `${getBaseUrl()}/api/twilio/voice`,
       voiceMethod: "POST",
+      statusCallback: `${getBaseUrl()}/api/twilio/call-status`,
+      statusCallbackMethod: "POST",
       smsUrl: `${getBaseUrl()}/api/twilio/sms-status`,
       smsMethod: "POST",
     });

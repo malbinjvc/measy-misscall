@@ -69,6 +69,9 @@ export async function PATCH(req: NextRequest) {
               ...(profileData.autoConfirmAppointments !== undefined && {
                 autoConfirmAppointments: profileData.autoConfirmAppointments,
               }),
+              ...(profileData.maxConcurrentBookings !== undefined && {
+                maxConcurrentBookings: profileData.maxConcurrentBookings,
+              }),
             },
           });
 
@@ -207,6 +210,39 @@ export async function PATCH(req: NextRequest) {
           data: {
             websiteConfig: JSON.parse(JSON.stringify(websiteConfig)),
             ...heroUpdate,
+          },
+        });
+        break;
+      }
+
+      case "domain": {
+        const domain = typeof data.customDomain === "string" ? data.customDomain.toLowerCase().trim() : null;
+
+        if (domain) {
+          const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+          if (!domainRegex.test(domain) || domain.length > 253) {
+            return NextResponse.json({ success: false, error: "Invalid domain format" }, { status: 400 });
+          }
+          // Block main app domain
+          const mainHost = new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost").hostname;
+          if (domain === mainHost || domain.endsWith(`.${mainHost}`)) {
+            return NextResponse.json({ success: false, error: "Cannot use the app domain" }, { status: 400 });
+          }
+          // Check uniqueness
+          const existing = await prisma.tenant.findFirst({
+            where: { customDomain: domain, id: { not: tenantId } },
+            select: { id: true },
+          });
+          if (existing) {
+            return NextResponse.json({ success: false, error: "This domain is already in use by another business" }, { status: 409 });
+          }
+        }
+
+        await prisma.tenant.update({
+          where: { id: tenantId },
+          data: {
+            customDomain: domain || null,
+            customDomainVerified: false, // reset verification on change
           },
         });
         break;

@@ -37,25 +37,19 @@ export async function GET(req: NextRequest) {
       prisma.customer.count({ where }),
     ]);
 
-    // Get appointment counts for each customer
+    // Get appointment counts + last booking in a single raw query (O(1) per phone)
     const phones = customers.map((c) => c.phone);
-    const appointmentCounts = await prisma.appointment.groupBy({
-      by: ["customerPhone"],
-      where: { tenantId, customerPhone: { in: phones } },
-      _count: true,
-    });
+    const phoneStats = phones.length > 0
+      ? await prisma.$queryRaw<{ customerPhone: string; count: number; lastBooking: Date | null }[]>`
+          SELECT "customerPhone", COUNT(*)::int AS count, MAX("createdAt") AS "lastBooking"
+          FROM "Appointment"
+          WHERE "tenantId" = ${tenantId} AND "customerPhone" = ANY(${phones})
+          GROUP BY "customerPhone"
+        `
+      : [];
 
-    const countMap = new Map(appointmentCounts.map((a) => [a.customerPhone, a._count]));
-
-    // Get last booking date per customer
-    const lastBookings = await prisma.appointment.findMany({
-      where: { tenantId, customerPhone: { in: phones } },
-      orderBy: { createdAt: "desc" },
-      distinct: ["customerPhone"],
-      select: { customerPhone: true, createdAt: true },
-    });
-
-    const lastBookingMap = new Map(lastBookings.map((b) => [b.customerPhone, b.createdAt]));
+    const countMap = new Map(phoneStats.map((r) => [r.customerPhone, r.count]));
+    const lastBookingMap = new Map(phoneStats.map((r) => [r.customerPhone, r.lastBooking]));
 
     const enriched = customers.map((c) => ({
       ...c,

@@ -111,12 +111,15 @@ export interface TenantData {
   ivrAudioUrl: string | null;
   stripeCustomerId: string | null;
   autoConfirmAppointments: boolean;
+  maxConcurrentBookings: number;
   facebookUrl: string | null;
   instagramUrl: string | null;
   mapUrl: string | null;
   heroMediaUrl: string | null;
   heroMediaType: string | null;
   websiteConfig: WebsiteConfig | null;
+  customDomain: string | null;
+  customDomainVerified: boolean;
   services: ServiceData[];
   businessHours: BusinessHoursData[];
   subscription: SubscriptionData | null;
@@ -361,6 +364,25 @@ export interface TextOverMediaElement {
 
 export type SectionElement = TextElement | MediaElement | TextOverMediaElement;
 
+// ─── Reel Section Types ─────────────────────────────
+
+export interface ReelCard {
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfig;
+  subtitle: TextConfig;
+  overlay: OverlayConfig;
+}
+
+export interface ReelSectionConfig {
+  type: "reel";
+  id: string;
+  visible: boolean;
+  name: string;
+  cards: ReelCard[];
+}
+
 // ─── Custom Section Config ──────────────────────────
 
 export interface CustomSectionConfig {
@@ -379,7 +401,8 @@ export type WebsiteSectionConfig =
   | HeroSectionConfig
   | ReviewsSectionConfig
   | ServicesSectionConfig
-  | CustomSectionConfig;
+  | CustomSectionConfig
+  | ReelSectionConfig;
 
 export interface WebsiteConfig {
   theme: WebsiteTheme;

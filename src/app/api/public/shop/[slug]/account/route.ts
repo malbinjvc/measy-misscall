@@ -49,7 +49,7 @@ export async function GET(
           ...(normalizedPhone.length === 10 ? [{ customerPhone: { endsWith: normalizedPhone } }] : []),
         ],
       },
-      orderBy: { date: "desc" },
+      orderBy: { createdAt: "desc" },
       include: {
         service: { select: { id: true, name: true, duration: true, price: true } },
         serviceOption: { select: { id: true, name: true, duration: true, price: true } },

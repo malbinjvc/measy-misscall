@@ -93,6 +93,11 @@ function LoginForm() {
                 Registration successful! Please sign in.
               </div>
             )}
+            {searchParams.get("reset") && (
+              <div className="rounded-md bg-green-50 p-3 text-sm text-green-700">
+                Password reset successful! Please sign in with your new password.
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -114,6 +119,9 @@ function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
+              <Link href="/forgot-password" className="text-xs text-primary hover:underline block text-right">
+                Forgot Password?
+              </Link>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-4">

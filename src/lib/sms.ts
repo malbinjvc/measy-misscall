@@ -2,6 +2,7 @@ import { SmsType } from "@prisma/client";
 import prisma from "./prisma";
 import { getTwilioClient } from "./twilio";
 import { getBaseUrl, getShopUrl, normalizePhoneForStorage } from "./utils";
+import { chargeForUsage } from "./wallet";
 
 const OPT_OUT_NOTICE = "\nReply STOP to opt out.";
 
@@ -50,6 +51,11 @@ export async function sendSms({
         status: "QUEUED",
       },
     });
+
+    // Charge wallet for SMS usage (fire-and-forget)
+    chargeForUsage(tenantId, "sms", 1).catch((err) =>
+      console.error("SMS wallet charge failed:", err)
+    );
 
     return { success: true, messageSid: message.sid, smsLogId: smsLog.id };
   } catch (error: unknown) {
@@ -101,19 +107,26 @@ export function buildReminderSmsBody(
   return `Reminder from ${businessName}: You have an appointment tomorrow at ${startTime}. View details: ${accountUrl}${OPT_OUT_NOTICE}`;
 }
 
+export function buildCampaignSmsBody(
+  businessName: string,
+  slug: string,
+  customMessage: string
+): string {
+  const url = getShopUrl(slug);
+  return `${businessName}: ${customMessage}\n\nBook now: ${url}${OPT_OUT_NOTICE}`;
+}
+
 /**
  * Send an SMS only if the customer has opted in (smsConsent === true).
  * Looks up the Customer by tenantId + phone (last-10-digit matching).
  */
 export async function sendSmsWithConsent(params: SendSmsParams): Promise<{ success: boolean; error?: string; messageSid?: string }> {
   const normalizedPhone = normalizePhoneForStorage(params.to);
-  const last10 = normalizedPhone.slice(-10);
 
-  // Find customer by tenantId and phone (last 10 digits)
-  const customer = await prisma.customer.findFirst({
+  // Find customer by tenantId + exact normalized phone (uses @@unique index)
+  const customer = await prisma.customer.findUnique({
     where: {
-      tenantId: params.tenantId,
-      phone: { endsWith: last10 },
+      tenantId_phone: { tenantId: params.tenantId, phone: normalizedPhone },
     },
     select: { smsConsent: true },
   });

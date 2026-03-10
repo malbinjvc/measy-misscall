@@ -11,6 +11,7 @@ declare module "next-auth" {
       role: UserRole;
       tenantId: string | null;
       tenantStatus: TenantStatus | null;
+      isImpersonating?: boolean;
       image?: string | null;
     };
   }
@@ -31,5 +32,7 @@ declare module "next-auth/jwt" {
     role: UserRole;
     tenantId: string | null;
     tenantStatus: TenantStatus | null;
+    isImpersonating?: boolean;
+    statusCheckedAt?: number;
   }
 }

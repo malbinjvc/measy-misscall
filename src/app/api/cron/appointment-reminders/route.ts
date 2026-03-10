@@ -74,39 +74,43 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // Filter candidates that fall within the reminder window
+  const eligible = candidates.filter((apt) => {
+    if (!apt.tenant.assignedTwilioNumber) return false;
+    const aptMs = appointmentToUtcTimestamp(apt.date, apt.startTime).getTime();
+    return aptMs >= windowStartMs && aptMs <= windowEndMs;
+  });
+
+  // Process in batches of 20 to avoid overwhelming Twilio
+  const BATCH_SIZE = 20;
   let sentCount = 0;
 
-  for (const apt of candidates) {
-    const aptUtc = appointmentToUtcTimestamp(apt.date, apt.startTime);
-    const aptMs = aptUtc.getTime();
+  for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
+    const batch = eligible.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (apt) => {
+        const dateStr = formatDateUTC(apt.date);
+        const body = buildReminderSmsBody(apt.tenant.name, apt.tenant.slug, dateStr, apt.startTime);
 
-    // Check if appointment falls within the 11.5–12.5 hour window
-    if (aptMs < windowStartMs || aptMs > windowEndMs) continue;
+        await sendSmsWithConsent({
+          tenantId: apt.tenantId,
+          to: apt.customerPhone,
+          from: apt.tenant.assignedTwilioNumber!,
+          body,
+          type: "APPOINTMENT_REMINDER",
+        });
 
-    // Skip if tenant has no Twilio number
-    if (!apt.tenant.assignedTwilioNumber) continue;
+        await prisma.appointment.update({
+          where: { id: apt.id },
+          data: { reminderSentAt: new Date() },
+        });
+      })
+    );
 
-    const dateStr = formatDateUTC(apt.date);
-    const body = buildReminderSmsBody(apt.tenant.name, apt.tenant.slug, dateStr, apt.startTime);
-
-    try {
-      await sendSmsWithConsent({
-        tenantId: apt.tenantId,
-        to: apt.customerPhone,
-        from: apt.tenant.assignedTwilioNumber,
-        body,
-        type: "APPOINTMENT_REMINDER",
-      });
-
-      // Mark reminder as sent
-      await prisma.appointment.update({
-        where: { id: apt.id },
-        data: { reminderSentAt: new Date() },
-      });
-
-      sentCount++;
-    } catch (err) {
-      console.error(`Reminder SMS error for appointment ${apt.id}:`, err);
+    sentCount += results.filter((r) => r.status === "fulfilled").length;
+    const errors = results.filter((r) => r.status === "rejected");
+    for (const err of errors) {
+      console.error("Reminder SMS error:", (err as PromiseRejectedResult).reason);
     }
   }
 

@@ -38,6 +38,7 @@ export const businessProfileSchema = z.object({
   mapUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
   businessPhoneNumber: z.string().min(10, "Business phone number is required"),
   autoConfirmAppointments: z.boolean().optional(),
+  maxConcurrentBookings: z.number().int().min(1).max(50).optional(),
 });
 
 export const serviceSchema = z.object({
@@ -77,6 +78,7 @@ export const createAppointmentSchema = z.object({
   vehicleMake: z.string().optional(),
   vehicleModel: z.string().optional(),
   appointmentPreference: z.enum(["DROP_OFF", "WAIT_FOR_IT", "PICKUP_DROPOFF"]).optional(),
+  smsConsent: z.boolean().optional(),
 }).refine(
   (data) => data.items?.length || data.serviceId,
   { message: "Either items array or serviceId is required", path: ["serviceId"] }
@@ -185,7 +187,32 @@ export const platformSettingsSchema = z.object({
   defaultIvrCallback: z.string().optional(),
   elevenlabsApiKey: z.string().optional(),
   elevenlabsVoiceId: z.string().optional(),
+  dashboardBannerUrl: z.string().optional().nullable(),
+  dashboardBannerType: z.enum(["image", "video"]).optional(),
+  dashboardBannerLink: z.string().url("Invalid URL").optional().nullable().or(z.literal("")),
+  dashboardBannerEnabled: z.boolean().optional(),
   maintenanceMode: z.boolean().optional(),
+});
+
+// ─── Support Tickets ────────────────────────────────
+
+export const createTicketSchema = z.object({
+  subject: z.string().min(3, "Subject must be at least 3 characters").max(200),
+  message: z.string().min(10, "Message must be at least 10 characters").max(5000),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"),
+});
+
+export const ticketMessageSchema = z.object({
+  message: z.string().max(5000).default(""),
+  attachmentUrls: z.array(z.string()).optional(),
+  attachmentNames: z.array(z.string()).optional(),
+}).refine(
+  (data) => data.message.trim().length > 0 || (data.attachmentUrls && data.attachmentUrls.length > 0),
+  { message: "Message or attachment is required", path: ["message"] }
+);
+
+export const updateTicketStatusSchema = z.object({
+  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
 });
 
 // ─── Reviews ─────────────────────────────────────────
@@ -195,12 +222,41 @@ export const reviewSchema = z.object({
   customerPhone: z.string().min(10, "Phone number is required"),
   rating: z.number().int().min(1, "Rating must be 1-5").max(5, "Rating must be 1-5"),
   comment: z.string().max(1000).optional(),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  imageUrl: z.string().optional().or(z.literal("")),
   verificationCode: z.string().length(6, "Verification code must be 6 digits"),
 });
 
 export const phoneVerificationSchema = z.object({
   phone: z.string().min(10, "Phone number is required"),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email("Invalid email address"),
+});
+
+export const resetPasswordSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  code: z.string().length(6, "Code must be 6 digits"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain uppercase, lowercase, and a number"),
+});
+
+// ─── Review Import ──────────────────────────────────
+
+export const importedReviewSchema = z.object({
+  serialNumber: z.number().int().positive().optional(),
+  customerName: z.string().min(1).max(200),
+  rating: z.number().int().min(1).max(5),
+  relativeDate: z.string().min(1),
+  comment: z.string().max(5000).optional().nullable(),
+  photoUrls: z.array(z.string().url()).default([]),
+});
+
+export const reviewImportPayloadSchema = z.object({
+  tenantId: z.string().min(1),
+  reviews: z.array(importedReviewSchema).min(1).max(500),
 });
 
 // ─── Inline validation schemas (for routes without dedicated schemas) ────
@@ -435,6 +491,25 @@ const customSectionSchema = z.object({
   elements: z.array(sectionElementSchema).max(20),
 });
 
+// ─── Reel Section ───────────────────────────────────
+
+const reelCardSchema = z.object({
+  id: z.string(),
+  mediaUrl: z.string().nullable(),
+  mediaType: z.enum(["image", "video"]),
+  headline: textConfigSchema,
+  subtitle: textConfigSchema,
+  overlay: overlayConfigSchema,
+});
+
+const reelSectionSchema = z.object({
+  type: z.literal("reel"),
+  id: z.string(),
+  visible: z.boolean(),
+  name: z.string().max(100),
+  cards: z.array(reelCardSchema).max(10),
+});
+
 // ─── Section Union (current) ────────────────────────
 
 const websiteSectionSchema = z.discriminatedUnion("type", [
@@ -442,6 +517,7 @@ const websiteSectionSchema = z.discriminatedUnion("type", [
   reviewsSectionSchema,
   servicesSectionSchema,
   customSectionSchema,
+  reelSectionSchema,
 ]);
 
 // ─── Legacy section schemas (for migration support) ─
@@ -455,6 +531,7 @@ const legacySectionSchema = z.discriminatedUnion("type", [
   mediaBlockSectionSchema,
   textOverMediaSectionSchema,
   customSectionSchema,
+  reelSectionSchema,
 ]);
 
 export const websiteConfigSchema = z.object({
@@ -469,6 +546,15 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type BusinessProfileInput = z.infer<typeof businessProfileSchema>;
 export type ServiceInput = z.infer<typeof serviceSchema>;
+// --- Campaigns ---
+
+export const createCampaignSchema = z.object({
+  name: z.string().min(2, "Campaign name is required").max(100),
+  message: z.string().min(10, "Message must be at least 10 characters").max(320, "Message too long (max 320 characters)"),
+  customerIds: z.array(z.string()).optional(),
+});
+
+export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export type UpdateAppointmentInput = z.infer<typeof updateAppointmentSchema>;
 export type ServiceSubOptionInput = z.infer<typeof serviceSubOptionSchema>;

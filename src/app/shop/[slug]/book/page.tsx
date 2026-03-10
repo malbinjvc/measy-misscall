@@ -47,6 +47,7 @@ interface AvailabilityData {
   openTime: string | null;
   closeTime: string | null;
   bookedSlots: { startTime: string; endTime: string }[];
+  maxConcurrentBookings: number;
 }
 
 interface BookingItem {
@@ -298,7 +299,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   }, [form.customerPhone]);
 
   // Load shop data
-  useEffect(() => {
+  const fetchShopData = useCallback(() => {
     fetch(`/api/public/shop/${params.slug}`)
       .then((res) => res.json())
       .then((data) => {
@@ -323,6 +324,17 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.slug]);
 
+  useEffect(() => { fetchShopData(); }, [fetchShopData]);
+
+  // Refetch when customer tabs back (picks up tenant changes like hours, services, prices)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") fetchShopData();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [fetchShopData]);
+
   // Fetch availability from server when date changes (single source of truth)
   const fetchAvailability = useCallback((date: string) => {
     if (!date || !shop) {
@@ -330,7 +342,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
       return;
     }
     setLoadingSlots(true);
-    fetch(`/api/public/shop/${params.slug}/availability?date=${date}`)
+    fetch(`/api/public/shop/${params.slug}/availability?date=${date}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -382,16 +394,18 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     return generateTimeSlots(availability.openTime, availability.closeTime, 30);
   })();
 
-  // Check if a slot overlaps any booked slot (considering aggregate duration)
+  // Check if a slot is fully booked (count overlaps against concurrent capacity)
   function isSlotBooked(time: string): boolean {
     if (!availability) return false;
+    const capacity = availability.maxConcurrentBookings || 1;
     const slotStart = timeStringToMinutes(time);
     const slotEnd = slotStart + (aggregateDuration || 30);
-    return availability.bookedSlots.some((booked) => {
+    const overlappingCount = availability.bookedSlots.filter((booked) => {
       const bookedStart = timeStringToMinutes(booked.startTime);
       const bookedEnd = timeStringToMinutes(booked.endTime);
       return slotStart < bookedEnd && slotEnd > bookedStart;
-    });
+    }).length;
+    return overlappingCount >= capacity;
   }
 
   // Clear error whenever the user interacts with key fields
@@ -714,6 +728,9 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                     {aggregatePrice > 0 && (
                       <p className="font-bold text-primary">Total: ${aggregatePrice.toFixed(2)}</p>
                     )}
+                    <p className="text-[8px] text-gray-400 mt-1 leading-tight italic">
+                      All prices listed are estimates. Final charges may vary depending on the vehicle&apos;s condition, selected or required additional services, applicable taxes, and shop fees determined at the time of service.
+                    </p>
                   </div>
                 </div>
               )}
@@ -1049,7 +1066,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                 <label htmlFor="sms-consent" className="text-xs text-muted-foreground leading-relaxed">
                   By providing my phone number and submitting this form, I consent to receive SMS text messages from{" "}
                   <span className="font-medium text-foreground">{shop?.name}</span>{" "}
-                  regarding my appointment request, confirmations, reminders, and service updates. Message and data rates may apply. Message frequency may vary. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. See the Measy{" "}
+                  regarding my appointment request, confirmations, reminders, promotions, and service updates. Message and data rates may apply. Message frequency may vary. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. See the Measy{" "}
                   <a href="https://measy.ca/pages/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:opacity-80">Privacy Policy</a>{" "}
                   and{" "}
                   <a href="https://measy.ca/pages/terms-of-service.html" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:opacity-80">Terms of Service</a>{" "}

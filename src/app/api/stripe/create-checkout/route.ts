@@ -40,12 +40,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const origin = req.headers.get("origin") || req.headers.get("referer")?.replace(/\/[^/]*$/, "") || process.env.NEXT_PUBLIC_APP_URL;
+    const baseUrl = origin?.replace(/\/$/, "") || "";
+
     const checkoutSession = await createCheckoutSession({
       customerId: stripeCustomerId,
       priceId: plan.stripePriceId,
       tenantId,
-      successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/billing?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/billing`,
+      successUrl: `${baseUrl}/dashboard/billing?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${baseUrl}/dashboard/billing`,
     });
 
     return NextResponse.json({ success: true, data: { url: checkoutSession.url } });

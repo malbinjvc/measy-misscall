@@ -28,7 +28,12 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { smsLogs: true },
+        include: {
+          smsLogs: {
+            select: { id: true, type: true, status: true, toNumber: true, sentAt: true },
+            take: 5, // Limit per call — most calls have 0-2 SMS logs
+          },
+        },
       }),
       prisma.call.count({ where }),
     ]);

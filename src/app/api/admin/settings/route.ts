@@ -74,11 +74,17 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const validated = platformSettingsSchema.partial().parse(body);
 
-    // Encrypt sensitive fields before saving to DB
+    // Encrypt sensitive fields before saving to DB.
+    // Skip masked values (****...) — these are returned by GET and should not overwrite real secrets.
     for (const field of sensitiveFields) {
       const val = (validated as Record<string, unknown>)[field];
-      if (val && typeof val === "string" && !isEncrypted(val)) {
-        (validated as Record<string, string>)[field] = encrypt(val);
+      if (val && typeof val === "string") {
+        if (val.startsWith("****")) {
+          // Masked placeholder — remove from update so the real value is preserved
+          delete (validated as Record<string, unknown>)[field];
+        } else if (!isEncrypted(val)) {
+          (validated as Record<string, string>)[field] = encrypt(val);
+        }
       }
     }
 

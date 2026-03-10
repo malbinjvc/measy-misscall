@@ -38,7 +38,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const validated = createServiceSchema.parse(body);
 
-    const count = await prisma.service.count({ where: { tenantId: session.user.tenantId } });
+    const maxSort = await prisma.service.aggregate({
+      where: { tenantId: session.user.tenantId },
+      _max: { sortOrder: true },
+    });
 
     const { options, ...serviceData } = validated;
 
@@ -46,7 +49,7 @@ export async function POST(req: NextRequest) {
       data: {
         ...serviceData,
         tenantId: session.user.tenantId,
-        sortOrder: count,
+        sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
         ...(options?.length
           ? {
               options: {

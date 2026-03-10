@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { verifyTwilioWebhook } from "@/lib/twilio";
+import { validateTwilioSignature } from "@/lib/twilio";
 import { normalizePhoneForStorage } from "@/lib/utils";
 
 const STOP_KEYWORDS = ["STOP", "UNSUBSCRIBE", "CANCEL", "QUIT"];
@@ -8,16 +8,28 @@ const START_KEYWORDS = ["START", "UNSTOP", "YES"];
 
 export async function POST(req: NextRequest) {
   try {
-    // Validate Twilio webhook signature
-    const isValid = await verifyTwilioWebhook(req);
+    // Parse form data once — reuse for verification and data extraction
+    const formData = await req.formData();
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => { params[key] = value.toString(); });
+
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const internalUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || internalUrl.origin;
+    const url = baseUrl + internalUrl.pathname + internalUrl.search;
+
+    const isValid = await validateTwilioSignature(signature, url, params);
     if (!isValid) {
       console.warn("Invalid Twilio signature on /api/twilio/incoming-sms");
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const formData = await req.formData();
-    const body = (formData.get("Body") as string || "").trim().toUpperCase();
-    const from = formData.get("From") as string || "";
+    const body = (params.Body || "").trim().toUpperCase();
+    const from = params.From || "";
 
     if (!from) {
       // Return empty TwiML
@@ -28,22 +40,32 @@ export async function POST(req: NextRequest) {
     }
 
     const normalizedPhone = normalizePhoneForStorage(from);
-    const last10 = normalizedPhone.slice(-10);
 
-    if (STOP_KEYWORDS.includes(body)) {
-      // Opt out: set smsConsent = false on all matching customers
+    // Identify which tenant this SMS belongs to via the Twilio number it was sent TO
+    const toNumber = params.To || "";
+    const tenant = toNumber
+      ? await prisma.tenant.findFirst({
+          where: { assignedTwilioNumber: toNumber },
+          select: { id: true },
+        })
+      : null;
+
+    if (tenant && STOP_KEYWORDS.includes(body)) {
+      // Opt out: scoped to tenant for isolation, exact phone match for performance
       await prisma.customer.updateMany({
-        where: { phone: { endsWith: last10 } },
+        where: { phone: normalizedPhone, tenantId: tenant.id },
         data: { smsConsent: false },
       });
-      console.log(`SMS opt-out processed for phone ending in ${last10}`);
-    } else if (START_KEYWORDS.includes(body)) {
-      // Opt in: set smsConsent = true on all matching customers
+      console.log(`SMS opt-out processed for ${normalizedPhone} (tenant ${tenant.id})`);
+    } else if (tenant && START_KEYWORDS.includes(body)) {
+      // Opt in: scoped to tenant for isolation, exact phone match for performance
       await prisma.customer.updateMany({
-        where: { phone: { endsWith: last10 } },
+        where: { phone: normalizedPhone, tenantId: tenant.id },
         data: { smsConsent: true },
       });
-      console.log(`SMS opt-in processed for phone ending in ${last10}`);
+      console.log(`SMS opt-in processed for ${normalizedPhone} (tenant ${tenant.id})`);
+    } else if (!tenant && (STOP_KEYWORDS.includes(body) || START_KEYWORDS.includes(body))) {
+      console.warn(`SMS consent keyword from ${normalizedPhone} but no tenant found for Twilio number ${toNumber}`);
     }
 
     // Return empty TwiML response (Twilio handles STOP at carrier level for US/CA)

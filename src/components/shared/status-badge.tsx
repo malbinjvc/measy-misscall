@@ -30,6 +30,10 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "ou
   CANCELING: "warning",
   UNPAID: "destructive",
   INCOMPLETE: "warning",
+  // Campaign statuses
+  DRAFT: "secondary",
+  SENDING: "warning",
+  SKIPPED: "secondary",
   // IVR responses
   CALLBACK: "destructive",
   BOOKING_LINK: "default",

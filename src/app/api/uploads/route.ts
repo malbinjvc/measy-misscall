@@ -7,7 +7,8 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm"];
-const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES];
+const ALLOWED_DOC_TYPES = ["application/pdf"];
+const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES, ...ALLOWED_DOC_TYPES];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 export async function POST(req: NextRequest) {
@@ -17,7 +18,11 @@ export async function POST(req: NextRequest) {
     if (!limit.allowed) return NextResponse.json({ success: false, error: "Too many uploads" }, { status: 429 });
 
     const session = await getServerSession(authOptions);
-    if (!session?.user?.tenantId) {
+    if (!session?.user) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+    // Allow SUPER_ADMIN (for platform uploads like banners) or tenant users
+    if (!session.user.tenantId && session.user.role !== "SUPER_ADMIN") {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
@@ -30,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { success: false, error: "Invalid file type. Allowed: JPEG, PNG, WebP, GIF, MP4, WebM" },
+        { success: false, error: "Invalid file type. Allowed: JPEG, PNG, WebP, GIF, MP4, WebM, PDF" },
         { status: 400 }
       );
     }
@@ -51,6 +56,7 @@ export async function POST(req: NextRequest) {
       "image/gif": [[0x47, 0x49, 0x46, 0x38]],
       "image/webp": [[0x52, 0x49, 0x46, 0x46]], // RIFF header
       "video/mp4": [[0x00, 0x00, 0x00], [0x66, 0x74, 0x79, 0x70]], // ftyp box (offset varies)
+      "application/pdf": [[0x25, 0x50, 0x44, 0x46]], // %PDF
     };
 
     const expectedMagic = magicMap[file.type];
@@ -65,7 +71,8 @@ export async function POST(req: NextRequest) {
 
     // Generate unique filename
     const ext = path.extname(file.name) || `.${file.type.split("/")[1]}`;
-    const filename = `${session.user.tenantId}-${Date.now()}${ext}`;
+    const prefix = session.user.tenantId || "platform";
+    const filename = `${prefix}-${Date.now()}${ext}`;
 
     // Ensure uploads directory exists
     const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -76,7 +83,7 @@ export async function POST(req: NextRequest) {
     await writeFile(filePath, buffer);
 
     // Determine media type
-    const mediaType = ALLOWED_VIDEO_TYPES.includes(file.type) ? "video" : "image";
+    const mediaType = ALLOWED_VIDEO_TYPES.includes(file.type) ? "video" : ALLOWED_DOC_TYPES.includes(file.type) ? "document" : "image";
 
     return NextResponse.json({
       success: true,

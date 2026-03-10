@@ -1,6 +1,6 @@
 "use client";
 
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useRef, useCallback } from "react";
 
@@ -18,19 +18,31 @@ export function SessionGuard({
   const hasRendered = useRef(false);
 
   const checkAndRedirect = useCallback(
-    (role: string | undefined) => {
+    (role: string | undefined, isImpersonating?: boolean, tenantStatus?: string | null) => {
       if (redirecting.current || !role) return;
 
       let redirectTo = "";
 
       if (requiredRole === "SUPER_ADMIN" && role !== "SUPER_ADMIN") {
         redirectTo = role === "SUPER_ADMIN" ? "/admin" : "/dashboard";
-      } else if (requiredRole === "TENANT" && role === "SUPER_ADMIN") {
+      } else if (requiredRole === "TENANT" && role === "SUPER_ADMIN" && !isImpersonating) {
         redirectTo = "/admin";
+      }
+
+      // Immediately enforce suspended/disabled status for tenant routes
+      if (requiredRole === "TENANT" && role !== "SUPER_ADMIN") {
+        if (tenantStatus === "SUSPENDED" || tenantStatus === "DISABLED") {
+          redirectTo = "/suspended";
+        }
       }
 
       if (redirectTo) {
         redirecting.current = true;
+        // For disabled tenants with no tenantId (deleted), sign out entirely
+        if (tenantStatus === "DISABLED" && !redirectTo.startsWith("/suspended")) {
+          signOut({ callbackUrl: "/login" });
+          return;
+        }
         router.replace(redirectTo);
       }
     },
@@ -49,8 +61,22 @@ export function SessionGuard({
       return;
     }
 
-    checkAndRedirect(session.user.role);
-  }, [session, status, checkAndRedirect, router, pathname]);
+    // Tenant was deleted — user record is gone, force sign out
+    if (
+      requiredRole === "TENANT" &&
+      session.user.role !== "SUPER_ADMIN" &&
+      !session.user.tenantId &&
+      session.user.tenantStatus === "DISABLED"
+    ) {
+      if (!redirecting.current) {
+        redirecting.current = true;
+        signOut({ callbackUrl: "/login" });
+      }
+      return;
+    }
+
+    checkAndRedirect(session.user.role, session.user.isImpersonating, session.user.tenantStatus);
+  }, [session, status, checkAndRedirect, router, pathname, requiredRole]);
 
   // On window/tab focus: directly fetch fresh session and check role
   useEffect(() => {
@@ -70,7 +96,7 @@ export function SessionGuard({
           return;
         }
 
-        checkAndRedirect(freshRole);
+        checkAndRedirect(freshRole, freshSession?.user?.isImpersonating, freshSession?.user?.tenantStatus);
 
         // Also update the SessionProvider's cached session
         update();
@@ -100,11 +126,12 @@ export function SessionGuard({
   if (status === "loading" && !hasRendered.current) return null;
   if (status !== "loading") hasRendered.current = true;
 
-  // Don't render children if wrong role
+  // Don't render children if wrong role or tenant is suspended/disabled
   if (session?.user) {
-    const currentRole = session.user.role;
+    const { role: currentRole, tenantStatus, isImpersonating } = session.user;
     if (requiredRole === "SUPER_ADMIN" && currentRole !== "SUPER_ADMIN") return null;
-    if (requiredRole === "TENANT" && currentRole === "SUPER_ADMIN") return null;
+    if (requiredRole === "TENANT" && currentRole === "SUPER_ADMIN" && !isImpersonating) return null;
+    if (requiredRole === "TENANT" && currentRole !== "SUPER_ADMIN" && (tenantStatus === "SUSPENDED" || tenantStatus === "DISABLED")) return null;
   }
 
   return <>{children}</>;

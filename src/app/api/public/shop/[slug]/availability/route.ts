@@ -9,7 +9,7 @@ export async function GET(
   try {
     const tenant = await prisma.tenant.findUnique({
       where: { slug: params.slug },
-      select: { id: true, status: true },
+      select: { id: true, status: true, maxConcurrentBookings: true },
     });
 
     if (!tenant || tenant.status !== "ACTIVE") {
@@ -35,7 +35,9 @@ export async function GET(
     if (!businessHours || !businessHours.isOpen) {
       return NextResponse.json({
         success: true,
-        data: { isOpen: false, openTime: null, closeTime: null, bookedSlots: [] },
+        data: { isOpen: false, openTime: null, closeTime: null, bookedSlots: [], maxConcurrentBookings: tenant.maxConcurrentBookings ?? 1 },
+      }, {
+        headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" },
       });
     }
 
@@ -62,7 +64,10 @@ export async function GET(
           startTime: a.startTime,
           endTime: a.endTime,
         })),
+        maxConcurrentBookings: tenant.maxConcurrentBookings ?? 1,
       },
+    }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" },
     });
   } catch (error) {
     console.error("Availability check error:", error);

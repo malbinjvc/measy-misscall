@@ -18,8 +18,10 @@ import {
   X,
   MessageCircle,
   Send,
+  ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ArrowLeft,
   Wrench,
   Image as ImageIcon,
   Loader2,
@@ -27,6 +29,8 @@ import {
   Plus as PlusIcon,
   Check,
   User,
+  Camera,
+  Upload,
 } from "lucide-react";
 import DOMPurify from "dompurify";
 import { FaFacebookF, FaInstagram, FaWhatsapp } from "react-icons/fa";
@@ -182,6 +186,21 @@ interface CustomSectionType extends WebsiteSectionBase {
   elements: SectionElementType[];
 }
 
+interface ReelCardType {
+  id: string;
+  mediaUrl: string | null;
+  mediaType: "image" | "video";
+  headline: TextConfigType;
+  subtitle: TextConfigType;
+  overlay: OverlayConfigType;
+}
+
+interface ReelSectionType extends WebsiteSectionBase {
+  type: "reel";
+  name: string;
+  cards: ReelCardType[];
+}
+
 type WebsiteSectionType =
   | HeroSectionType
   | ReviewsSectionType
@@ -190,7 +209,8 @@ type WebsiteSectionType =
   | TextBlockSectionType
   | MediaBlockSectionType
   | TextOverMediaSectionType
-  | CustomSectionType;
+  | CustomSectionType
+  | ReelSectionType;
 
 interface NavBarConfigType {
   logoUrl: string | null;
@@ -269,8 +289,9 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [liveConfig, setLiveConfig] = useState<WebsiteConfigType | null>(null);
 
-  useEffect(() => {
+  const fetchShop = useCallback(() => {
     fetch(`/api/public/shop/${params.slug}`)
       .then((res) => res.json())
       .then((data) => {
@@ -283,6 +304,29 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
       .catch(() => setError("Failed to load"))
       .finally(() => setLoading(false));
   }, [params.slug]);
+
+  useEffect(() => { fetchShop(); }, [fetchShop]);
+
+  // Refetch when customer tabs back (picks up tenant changes like hours, services, etc.)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") fetchShop();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [fetchShop]);
+
+  // Listen for live config updates from the website builder iframe parent
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "website-builder-config" && event.data.config) {
+        setLiveConfig(event.data.config);
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   if (loading) return <LoadingPage />;
   if (error || !shop) {
@@ -301,12 +345,15 @@ export default function ShopPage({ params }: { params: { slug: string } }) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Use live config from builder if available, otherwise use saved config
+  const activeConfig = liveConfig || shop.websiteConfig;
+
   // If websiteConfig exists, render the configured page
-  if (shop.websiteConfig) {
+  if (activeConfig) {
     return (
       <ConfiguredShopPage
         shop={shop}
-        config={shop.websiteConfig}
+        config={activeConfig}
         slug={params.slug}
         reviewModalOpen={reviewModalOpen}
         setReviewModalOpen={setReviewModalOpen}
@@ -870,8 +917,8 @@ function ServiceCard({ service, slug }: { service: Service; slug: string }) {
                         </div>
                       )}
 
-                      {/* Total price */}
-                      {option.price !== null && (
+                      {/* Total price — only show when sub-options or quantity alter the price */}
+                      {option.price !== null && totalPrice !== optionPrice && (
                         <div className="flex items-center justify-between pt-1 border-t">
                           <span className="text-xs font-medium text-muted-foreground">Total</span>
                           <span className="text-sm font-bold text-primary">${totalPrice.toFixed(2)}</span>
@@ -1044,8 +1091,47 @@ function WriteReviewModal({
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [mediaType, setMediaType] = useState<"image" | "video">("image");
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Client-side size validation
+    if (file.size > 10 * 1024 * 1024) {
+      setError("File too large. Maximum size is 10MB");
+      return;
+    }
+
+    setError("");
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/public/uploads", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.success) {
+        setImageUrl(data.data.url);
+        setMediaType(data.data.mediaType);
+      } else {
+        setError(data.error || "Upload failed");
+      }
+    } catch {
+      setError("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const clearUpload = () => {
+    setImageUrl("");
+    setMediaType("image");
+  };
 
   const sendOtp = async () => {
     setError("");
@@ -1236,13 +1322,50 @@ function WriteReviewModal({
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" /> Image URL (optional)
+                <Camera className="h-4 w-4" /> Photo / Video (optional)
               </Label>
-              <Input
-                placeholder="https://example.com/photo.jpg"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+                onChange={handleFileUpload}
+                className="hidden"
               />
+              {!imageUrl ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="w-full flex items-center justify-center gap-2 p-4 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-5 w-5" />
+                      Tap to upload a photo or video
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="relative rounded-lg overflow-hidden border">
+                  {mediaType === "video" ? (
+                    <video src={imageUrl} controls className="w-full max-h-48 object-contain bg-black" />
+                  ) : (
+                    <img src={imageUrl} alt="Upload preview" className="w-full max-h-48 object-contain bg-gray-50" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={clearUpload}
+                    className="absolute top-2 right-2 p-1 bg-black/60 rounded-full text-white hover:bg-black/80 transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
             <Button onClick={submitReview} disabled={loading || rating === 0} className="w-full">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -1936,6 +2059,273 @@ function ConfiguredCustomSection({ section, theme, slug }: { section: CustomSect
   );
 }
 
+// ─── Reel Section (Carousel + Fullscreen) ──────────────
+
+function ConfiguredReelSection({ section, theme, slug }: { section: ReelSectionType; theme: WebsiteConfigType["theme"]; slug: string }) {
+  const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const visibleCards = section.cards.filter((c) => c.mediaUrl);
+
+  if (visibleCards.length === 0) return null;
+
+  const scroll = (dir: "left" | "right") => {
+    if (!scrollRef.current) return;
+    const w = scrollRef.current.clientWidth * 0.7;
+    scrollRef.current.scrollBy({ left: dir === "left" ? -w : w, behavior: "smooth" });
+  };
+
+  return (
+    <section className="py-8">
+      <div className="max-w-5xl mx-auto px-4">
+        <div className="relative group">
+          {/* Left arrow */}
+          <button
+            onClick={() => scroll("left")}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+
+          {/* Carousel */}
+          <div
+            ref={scrollRef}
+            className="flex gap-3 overflow-x-auto scrollbar-hide snap-x snap-mandatory pb-2"
+            style={{ scrollSnapType: "x mandatory" }}
+          >
+            {section.cards.map((card, idx) => {
+              if (!card.mediaUrl) return null;
+              return (
+                <div
+                  key={card.id}
+                  className="flex-none snap-start cursor-pointer rounded-xl overflow-hidden relative"
+                  style={{ width: 180, aspectRatio: "9/16" }}
+                  onClick={() => setFullscreenIndex(idx)}
+                >
+                  {card.mediaType === "video" ? (
+                    <video
+                      src={card.mediaUrl}
+                      muted
+                      loop
+                      playsInline
+                      autoPlay
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  ) : (
+                    <img
+                      src={card.mediaUrl}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  )}
+
+                  {/* Overlay */}
+                  <div
+                    className="absolute inset-0"
+                    style={{ backgroundColor: card.overlay.color, opacity: card.overlay.opacity }}
+                  />
+
+                  {/* Text */}
+                  <div className="absolute bottom-0 left-0 right-0 p-3 space-y-0.5">
+                    {card.headline.content && (
+                      <ReelStyledText config={card.headline} maxFontSize={18} />
+                    )}
+                    {card.subtitle.content && (
+                      <ReelStyledText config={card.subtitle} maxFontSize={13} />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Right arrow */}
+          <button
+            onClick={() => scroll("right")}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {fullscreenIndex !== null && (
+        <ReelFullscreenOverlay
+          cards={section.cards}
+          startIndex={fullscreenIndex}
+          onClose={() => setFullscreenIndex(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+function ReelStyledText({ config, maxFontSize }: { config: TextConfigType; maxFontSize: number }) {
+  const style: React.CSSProperties = {
+    fontFamily: `'${config.fontFamily}', sans-serif`,
+    fontSize: Math.min(config.fontSize, maxFontSize),
+    fontWeight: config.fontWeight,
+    color: config.color,
+    textAlign: config.alignment,
+    lineHeight: config.lineHeight,
+    letterSpacing: config.letterSpacing,
+  };
+
+  if (config.textShadow?.enabled) {
+    style.textShadow = `${config.textShadow.x}px ${config.textShadow.y}px ${config.textShadow.blur}px ${config.textShadow.color}`;
+  }
+
+  return <p style={style} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(config.content) }} />;
+}
+
+function ReelFullscreenOverlay({
+  cards,
+  startIndex,
+  onClose,
+}: {
+  cards: ReelCardType[];
+  startIndex: number;
+  onClose: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const activeCards = cards.filter((c) => c.mediaUrl);
+  const [mutedMap, setMutedMap] = useState<Record<string, boolean>>({});
+
+  const toggleMute = (cardId: string) => {
+    const video = videoRefs.current.get(cardId);
+    if (video) {
+      video.muted = !video.muted;
+      setMutedMap((prev) => ({ ...prev, [cardId]: video.muted }));
+    }
+  };
+
+  useEffect(() => {
+    // Scroll to the starting card
+    if (containerRef.current && startIndex > 0) {
+      const target = containerRef.current.children[startIndex] as HTMLElement;
+      if (target) target.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+    }
+
+    // Lock body scroll
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [startIndex]);
+
+  // IntersectionObserver: auto-play visible video with audio, pause others
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target.querySelector("video") as HTMLVideoElement | null;
+          if (!video) return;
+          if (entry.isIntersecting) {
+            video.play().catch(() => {});
+          } else {
+            video.pause();
+          }
+        });
+      },
+      { root: container, threshold: 0.6 }
+    );
+
+    Array.from(container.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [activeCards.length]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black">
+      {/* Close button */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 z-[110] text-white bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+      >
+        <X className="h-6 w-6" />
+      </button>
+
+      {/* Back arrow */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 left-4 z-[110] text-white bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+      >
+        <ArrowLeft className="h-6 w-6" />
+      </button>
+
+      {/* Vertical snap-scroll container */}
+      <div
+        ref={containerRef}
+        className="h-full overflow-y-auto snap-y snap-mandatory scrollbar-hide"
+      >
+        {activeCards.map((card) => {
+          const isMuted = mutedMap[card.id] ?? false;
+          return (
+            <div
+              key={card.id}
+              className="h-screen w-full snap-start relative flex items-center justify-center"
+            >
+              {/* Media */}
+              {card.mediaType === "video" ? (
+                <video
+                  ref={(el) => { if (el) videoRefs.current.set(card.id, el); }}
+                  src={card.mediaUrl!}
+                  loop
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              ) : (
+                <img
+                  src={card.mediaUrl!}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              )}
+
+              {/* Overlay */}
+              <div
+                className="absolute inset-0"
+                style={{ backgroundColor: card.overlay.color, opacity: card.overlay.opacity }}
+              />
+
+              {/* Mute/unmute button for videos */}
+              {card.mediaType === "video" && (
+                <button
+                  onClick={() => toggleMute(card.id)}
+                  className="absolute bottom-20 right-4 z-[110] text-white bg-black/50 p-2.5 rounded-full hover:bg-black/70 transition-colors"
+                >
+                  {isMuted ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                  )}
+                </button>
+              )}
+
+              {/* Text at bottom */}
+              <div className="absolute bottom-16 left-0 right-0 px-6 space-y-2 z-10">
+                {card.headline.content && (
+                  <ReelStyledText config={card.headline} maxFontSize={36} />
+                )}
+                {card.subtitle.content && (
+                  <ReelStyledText config={card.subtitle} maxFontSize={18} />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConfiguredShopPage({
   shop,
   config,
@@ -2016,6 +2406,8 @@ function ConfiguredShopPage({
             return <ConfiguredTextOverMedia key={section.id} section={section} theme={config.theme} slug={slug} />;
           case "custom":
             return <ConfiguredCustomSection key={section.id} section={section} theme={config.theme} slug={slug} />;
+          case "reel":
+            return <ConfiguredReelSection key={section.id} section={section} theme={config.theme} slug={slug} />;
           default:
             return null;
         }

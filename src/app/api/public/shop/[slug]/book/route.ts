@@ -7,7 +7,7 @@ import { ZodError } from "zod";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { hashOtp } from "@/lib/crypto";
 import { getCustomerFromRequest, signCustomerToken, setCustomerCookie } from "@/lib/customer-auth";
-import { sendSmsWithConsent, buildConfirmationSmsBody } from "@/lib/sms";
+import { sendSmsWithConsent, buildConfirmationSmsBody, buildReminderSmsBody } from "@/lib/sms";
 import { formatDateUTC } from "@/lib/utils";
 
 export async function POST(
@@ -83,15 +83,32 @@ export async function POST(
       return NextResponse.json({ success: false, error: "At least one service is required" }, { status: 400 });
     }
 
+    // Batch fetch all services and options in 2 queries (no N+1)
+    const serviceIds = Array.from(new Set(rawItems.map((item) => item.serviceId)));
+    const optionIds = Array.from(new Set(rawItems.map((item) => item.serviceOptionId).filter(Boolean))) as string[];
+
+    const [servicesList, optionsList] = await Promise.all([
+      prisma.service.findMany({
+        where: { id: { in: serviceIds }, tenantId: tenant.id, isActive: true },
+      }),
+      optionIds.length > 0
+        ? prisma.serviceOption.findMany({
+            where: { id: { in: optionIds }, isActive: true },
+            include: { subOptions: { where: { isActive: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const serviceMap = new Map(servicesList.map((s) => [s.id, s]));
+    const optionMap = new Map(optionsList.map((o) => [o.id, o]));
+
     // Validate each item and compute aggregate duration
     let totalDuration = 0;
     const validatedItems: { serviceId: string; serviceOptionId: string | null; quantity: number; selectedSubOptions: string[]; sortOrder: number }[] = [];
 
     for (let i = 0; i < rawItems.length; i++) {
       const item = rawItems[i];
-      const service = await prisma.service.findFirst({
-        where: { id: item.serviceId, tenantId: tenant.id, isActive: true },
-      });
+      const service = serviceMap.get(item.serviceId);
       if (!service) {
         return NextResponse.json({ success: false, error: `Service not found` }, { status: 404 });
       }
@@ -102,11 +119,8 @@ export async function POST(
       let selectedSubOptions: string[] = [];
 
       if (item.serviceOptionId) {
-        const option = await prisma.serviceOption.findFirst({
-          where: { id: item.serviceOptionId, serviceId: service.id, isActive: true },
-          include: { subOptions: { where: { isActive: true } } },
-        });
-        if (!option) {
+        const option = optionMap.get(item.serviceOptionId);
+        if (!option || option.serviceId !== service.id) {
           return NextResponse.json({ success: false, error: "Service option not found" }, { status: 404 });
         }
         if (option.duration) duration = option.duration;
@@ -115,9 +129,9 @@ export async function POST(
         if (quantity > option.maxQuantity) quantity = option.maxQuantity;
 
         if (item.selectedSubOptionIds?.length) {
-          const validSubIds = option.subOptions.map((s) => s.id);
+          const validSubIds = new Set(option.subOptions.map((s) => s.id));
           for (const subId of item.selectedSubOptionIds) {
-            if (!validSubIds.includes(subId)) {
+            if (!validSubIds.has(subId)) {
               return NextResponse.json({ success: false, error: "Invalid sub-option selected" }, { status: 400 });
             }
           }
@@ -183,7 +197,8 @@ export async function POST(
     const endOfDay = new Date(validated.date + "T23:59:59.999Z");
 
     const { appointment, customer } = await prisma.$transaction(async (tx) => {
-      const overlapping = await tx.appointment.findFirst({
+      // Count overlapping non-cancelled appointments for concurrent capacity check
+      const overlappingCount = await tx.appointment.count({
         where: {
           tenantId: tenant.id,
           date: { gte: appointmentDate, lte: endOfDay },
@@ -195,7 +210,7 @@ export async function POST(
         },
       });
 
-      if (overlapping) {
+      if (overlappingCount >= (tenant.maxConcurrentBookings ?? 1)) {
         throw { code: "OVERLAP" };
       }
 
@@ -298,6 +313,30 @@ export async function POST(
         body: smsBody,
         type: "APPOINTMENT_CONFIRMATION",
       }).catch((err) => console.error("Auto-confirm SMS error:", err));
+
+      // If appointment is within 12.5h, send reminder immediately (cron window already passed)
+      const aptDateCopy = new Date(appointment.date);
+      if (aptDateCopy.getUTCHours() === 0 && aptDateCopy.getUTCMinutes() === 0) aptDateCopy.setUTCHours(12);
+      const torontoDate = aptDateCopy.toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
+      const fmtr = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", timeZoneName: "shortOffset" });
+      const offsetMatch = fmtr.formatToParts(aptDateCopy).find((p) => p.type === "timeZoneName")?.value?.match(/GMT([+-]?\d+)/);
+      const offsetHours = offsetMatch ? parseInt(offsetMatch[1]) : -5;
+      const aptUtc = new Date(`${torontoDate}T${appointment.startTime}:00.000Z`);
+      aptUtc.setUTCHours(aptUtc.getUTCHours() - offsetHours);
+      const hoursUntil = (aptUtc.getTime() - Date.now()) / (60 * 60 * 1000);
+
+      if (hoursUntil <= 12.5 && hoursUntil >= 1) {
+        const reminderBody = buildReminderSmsBody(tenant.name, tenant.slug, dateStr, appointment.startTime);
+        sendSmsWithConsent({
+          tenantId: tenant.id,
+          to: appointment.customerPhone,
+          from: tenant.assignedTwilioNumber,
+          body: reminderBody,
+          type: "APPOINTMENT_REMINDER",
+        })
+          .then(() => prisma.appointment.update({ where: { id: appointment.id }, data: { reminderSentAt: new Date() } }))
+          .catch((err) => console.error("Immediate reminder SMS error:", err));
+      }
     }
 
     // Auto-login: set customer auth cookie so they can access their account
@@ -314,7 +353,7 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Validation failed", details: error.issues }, { status: 400 });
     }
     if ((error as {code?: string}).code === "OVERLAP") {
-      return NextResponse.json({ success: false, error: "This time slot is already booked" }, { status: 409 });
+      return NextResponse.json({ success: false, error: "This time slot is fully booked" }, { status: 409 });
     }
     console.error("Booking error:", error);
     return NextResponse.json({ success: false, error: "Booking failed" }, { status: 500 });

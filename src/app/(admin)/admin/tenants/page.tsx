@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Building2, ChevronLeft, ChevronRight, Check, X, Trash2 } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Check, X, Trash2, Eye } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
 interface TenantRow {
@@ -49,6 +49,7 @@ export default function AdminTenantsPage() {
       if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
+    staleTime: 60000,
   });
 
   const updateMutation = useMutation({
@@ -136,6 +137,25 @@ function TenantRow({ tenant, updateMutation, deleteMutation }: { tenant: TenantR
   const [editing, setEditing] = useState(false);
   const [twilioNumber, setTwilioNumber] = useState(tenant.assignedTwilioNumber || "");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [impersonating, setImpersonating] = useState(false);
+
+  async function handleImpersonate() {
+    setImpersonating(true);
+    try {
+      const res = await fetch("/api/admin/impersonate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant.id }),
+      });
+      if (res.ok) {
+        // Force session refresh so JWT cookie gets updated before navigation
+        await fetch("/api/auth/session");
+        window.location.href = "/dashboard";
+      }
+    } finally {
+      setImpersonating(false);
+    }
+  }
 
   function saveTwilioNumber() {
     updateMutation.mutate({ id: tenant.id, assignedTwilioNumber: twilioNumber });
@@ -193,6 +213,16 @@ function TenantRow({ tenant, updateMutation, deleteMutation }: { tenant: TenantR
       <TableCell className="text-sm">{formatDate(tenant.createdAt)}</TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-blue-600"
+            onClick={handleImpersonate}
+            disabled={impersonating}
+            title="View as this tenant"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
           <Select className="w-32 h-8 text-xs" value={tenant.status} onChange={(e) => updateMutation.mutate({ id: tenant.id, status: e.target.value })}>
             <option value="ONBOARDING">Onboarding</option>
             <option value="ACTIVE">Active</option>

@@ -60,6 +60,7 @@ export default function CustomersPage() {
       const res = await fetch(`/api/customers?${params}`);
       return res.json();
     },
+    staleTime: 60000,
   });
 
   function handleSearch() {

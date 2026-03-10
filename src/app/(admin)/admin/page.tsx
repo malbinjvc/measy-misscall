@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatsCardSkeleton } from "@/components/shared/loading";
-import { Building2, PhoneCall, Calendar, DollarSign, Users, TrendingUp } from "lucide-react";
+import { Building2, PhoneCall, Calendar, DollarSign, Users, TrendingUp, Store, UserCheck } from "lucide-react";
 
 export default function AdminDashboardPage() {
   const { data: stats, isLoading } = useQuery({
@@ -13,14 +13,15 @@ export default function AdminDashboardPage() {
       const json = await res.json();
       return json.data;
     },
+    staleTime: 60000,
   });
 
   if (isLoading) {
     return (
       <div>
         <h1 className="text-2xl font-bold mb-6">Platform Overview</h1>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <StatsCardSkeleton key={i} />)}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => <StatsCardSkeleton key={i} />)}
         </div>
       </div>
     );
@@ -33,12 +34,14 @@ export default function AdminDashboardPage() {
     { title: "Total Appointments", value: stats?.totalAppointments ?? 0, icon: Calendar, color: "text-orange-600" },
     { title: "New This Month", value: stats?.newTenantsThisMonth ?? 0, icon: TrendingUp, color: "text-cyan-600" },
     { title: "Revenue", value: `$${stats?.totalRevenue ?? 0}`, icon: DollarSign, color: "text-emerald-600" },
+    { title: "Unique Customers", value: stats?.customerInsights?.totalUniqueCustomers ?? 0, icon: UserCheck, color: "text-indigo-600" },
+    { title: "Multi-Shop Customers", value: stats?.customerInsights?.multiShopCustomers ?? 0, icon: Store, color: "text-pink-600" },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Platform Overview</h1>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
           <Card key={stat.title}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">

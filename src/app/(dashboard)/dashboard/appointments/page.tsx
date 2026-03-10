@@ -124,6 +124,7 @@ interface AppointmentListResponse {
 interface CalendarResponse {
   data: Record<string, Appointment[]>;
   businessHours?: BusinessHour[];
+  maxConcurrentBookings?: number;
 }
 
 type AppointmentUpdateMutation = UseMutationResult<
@@ -156,23 +157,32 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 
 function computeAvailableSlots(
   bh: BusinessHour | undefined,
-  appointments: Appointment[]
+  appointments: Appointment[],
+  maxConcurrent: number = 1
 ): { total: number; occupied: number; available: number } | null {
   if (!bh || !bh.isOpen) return null;
   const openMin = timeStringToMinutes(bh.openTime);
   const closeMin = timeStringToMinutes(bh.closeTime);
   const total = generateTimeSlots(bh.openTime, bh.closeTime, 30).length;
-  const occupiedSet = new Set<number>();
+  // Count bookings per 30-min chunk
+  const slotCounts = new Map<number, number>();
   for (const apt of appointments) {
     if (apt.status === "CANCELLED" || apt.status === "NO_SHOW") continue;
     const startMin = timeStringToMinutes(apt.startTime);
     const endMin = timeStringToMinutes(apt.endTime);
     for (let m = startMin; m < endMin; m += 30) {
-      if (m >= openMin && m < closeMin) occupiedSet.add(m);
+      if (m >= openMin && m < closeMin) {
+        slotCounts.set(m, (slotCounts.get(m) || 0) + 1);
+      }
     }
   }
-  const available = Math.max(0, total - occupiedSet.size);
-  return { total, occupied: occupiedSet.size, available };
+  // A chunk is "fully occupied" only when it has maxConcurrent bookings
+  let fullyOccupied = 0;
+  slotCounts.forEach((count) => {
+    if (count >= maxConcurrent) fullyOccupied++;
+  });
+  const available = Math.max(0, total - fullyOccupied);
+  return { total, occupied: fullyOccupied, available };
 }
 
 function computeConflicts(
@@ -211,6 +221,17 @@ export default function AppointmentsPage() {
 
   // ── Data fetching ──
 
+  const { data: tenantData } = useQuery({
+    queryKey: ["tenant"],
+    queryFn: async () => {
+      const res = await fetch("/api/tenant");
+      if (!res.ok) throw new Error("Request failed");
+      const json = await res.json();
+      return json.data;
+    },
+    staleTime: 60000,
+  });
+
   const { data: listData, isLoading: listLoading } = useQuery({
     queryKey: ["appointments", page, statusFilter],
     queryFn: async () => {
@@ -220,7 +241,7 @@ export default function AppointmentsPage() {
       if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
-    refetchInterval: 30000,
+    staleTime: 60000,
   });
 
   const { data: calendarData } = useQuery<CalendarResponse>({
@@ -231,7 +252,7 @@ export default function AppointmentsPage() {
       return res.json();
     },
     enabled: activeView === "calendar",
-    refetchInterval: 30000,
+    staleTime: 60000,
   });
 
   const updateMutation = useMutation({
@@ -408,6 +429,7 @@ export default function AppointmentsPage() {
       {/* Create Dialog */}
       {showCreateDialog && (
         <CreateAppointmentDialog
+          businessName={tenantData?.name || ""}
           prefilledDate={createPrefilledDate}
           existingAppointments={
             createPrefilledDate && calendarData?.data
@@ -738,7 +760,7 @@ function CalendarView({
             const dayOfWeek = new Date(year, month - 1, day).getDay();
             const bh = businessHoursMap[dayOfWeek];
             const isClosed = bh ? !bh.isOpen : false;
-            const slotInfo = computeAvailableSlots(bh, dayAppts);
+            const slotInfo = computeAvailableSlots(bh, dayAppts, calendarData?.maxConcurrentBookings ?? 1);
             const conflicts = computeConflicts(bh, dayAppts);
             const isToday =
               new Date().getFullYear() === year &&
@@ -1058,15 +1080,18 @@ function RescheduleDialog({
   }, [date, bhData?.businessHours]);
 
   // Build occupied slot map — exclude current appointment (it's being moved)
+  const maxConcurrent = bhData?.maxConcurrentBookings ?? 1;
   const occupiedSlotMap = useMemo(() => {
-    const map = new Map<number, Appointment>();
+    const map = new Map<number, Appointment[]>();
     for (const apt of appointmentsForDate) {
       if (apt.id === appointment.id) continue;
       if (apt.status === "CANCELLED" || apt.status === "NO_SHOW") continue;
       const startMin = timeStringToMinutes(apt.startTime);
       const endMin = timeStringToMinutes(apt.endTime);
       for (let m = startMin; m < endMin; m += 30) {
-        map.set(m, apt);
+        const existing = map.get(m) || [];
+        existing.push(apt);
+        map.set(m, existing);
       }
     }
     return map;
@@ -1148,33 +1173,36 @@ function RescheduleDialog({
               <div className="mt-1 grid grid-cols-4 gap-2">
                 {timeSlots.map((slot) => {
                   const slotMin = timeStringToMinutes(slot);
-                  const bookedApt = occupiedSlotMap.get(slotMin);
+                  const bookedApts = occupiedSlotMap.get(slotMin) || [];
+                  const isFull = bookedApts.length >= maxConcurrent;
 
-                  // Check if selecting this slot would overlap a booked slot
+                  // Check if selecting this slot would cause any future chunk to exceed capacity
                   let wouldOverlap = false;
-                  if (!bookedApt) {
+                  if (!isFull) {
                     for (let s = 0; s < slotsNeeded; s++) {
-                      if (occupiedSlotMap.has(slotMin + s * 30)) {
+                      const futureApts = occupiedSlotMap.get(slotMin + s * 30) || [];
+                      if (futureApts.length >= maxConcurrent) {
                         wouldOverlap = true;
                         break;
                       }
                     }
                   }
 
-                  if (bookedApt) {
+                  if (isFull) {
+                    const lastApt = bookedApts[bookedApts.length - 1];
                     const statusBg: Record<string, string> = {
                       CONFIRMED: "bg-blue-100 border-blue-400",
                       PENDING: "bg-green-100 border-green-400",
                       COMPLETED: "bg-[#6040E0]/15 border-[#6040E0]",
                     };
-                    const style = statusBg[bookedApt.status] || "bg-gray-100 border-gray-400";
+                    const style = statusBg[lastApt.status] || "bg-gray-100 border-gray-400";
                     return (
                       <div
                         key={slot}
                         className={`rounded-md border px-2 py-1.5 text-left cursor-not-allowed ${style}`}
                       >
                         <p className="text-xs font-medium">{slot}</p>
-                        <p className="text-[10px] truncate">{bookedApt.customerName}</p>
+                        <p className="text-[10px] truncate">{maxConcurrent > 1 ? `Full (${bookedApts.length}/${maxConcurrent})` : lastApt.customerName}</p>
                       </div>
                     );
                   }
@@ -1205,7 +1233,7 @@ function RescheduleDialog({
                     >
                       <p className="text-xs font-medium">{slot}</p>
                       <p className={`text-[10px] ${isSelected ? "text-primary-foreground/80" : "text-green-600"}`}>
-                        Available
+                        {maxConcurrent > 1 && bookedApts.length > 0 ? `${bookedApts.length}/${maxConcurrent} booked` : "Available"}
                       </p>
                     </button>
                   );
@@ -1247,8 +1275,9 @@ let cartItemCounter = 0;
 function newCartItemId() { return `cart-${++cartItemCounter}`; }
 
 function CreateAppointmentDialog({
-  prefilledDate, existingAppointments, onSelectAppointment, onClose, onCreated,
+  businessName, prefilledDate, existingAppointments, onSelectAppointment, onClose, onCreated,
 }: {
+  businessName: string;
   prefilledDate: string | null;
   existingAppointments?: Appointment[];
   onSelectAppointment?: (a: Appointment) => void;
@@ -1265,6 +1294,7 @@ function CreateAppointmentDialog({
   const [date, setDate] = useState(prefilledDate || "");
   const [startTime, setStartTime] = useState("");
   const [notesField, setNotesField] = useState("");
+  const [smsConsent, setSmsConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1326,14 +1356,17 @@ function CreateAppointmentDialog({
     return generateTimeSlots(bh.openTime, bh.closeTime, 30);
   }, [date, bhData?.businessHours]);
 
+  const maxConcurrent = bhData?.maxConcurrentBookings ?? 1;
   const occupiedSlotMap = useMemo(() => {
-    const map = new Map<number, Appointment>();
+    const map = new Map<number, Appointment[]>();
     for (const apt of appointmentsForDate) {
       if (apt.status === "CANCELLED" || apt.status === "NO_SHOW") continue;
       const startMin = timeStringToMinutes(apt.startTime);
       const endMin = timeStringToMinutes(apt.endTime);
       for (let m = startMin; m < endMin; m += 30) {
-        map.set(m, apt);
+        const existing = map.get(m) || [];
+        existing.push(apt);
+        map.set(m, existing);
       }
     }
     return map;
@@ -1401,6 +1434,7 @@ function CreateAppointmentDialog({
           date,
           startTime,
           notes: notesField || undefined,
+          smsConsent,
         }),
       });
       if (!res.ok) throw new Error("Request failed");
@@ -1625,35 +1659,38 @@ function CreateAppointmentDialog({
               <div className="mt-1 grid grid-cols-4 gap-2">
                 {timeSlots.map((slot) => {
                   const slotMin = timeStringToMinutes(slot);
-                  const bookedApt = occupiedSlotMap.get(slotMin);
+                  const bookedApts = occupiedSlotMap.get(slotMin) || [];
+                  const isFull = bookedApts.length >= maxConcurrent;
 
                   // Check overlap using aggregate duration
                   let wouldOverlap = false;
-                  if (!bookedApt && hasValidItem) {
+                  if (!isFull && hasValidItem) {
                     for (let s = 0; s < aggregateSlotsNeeded; s++) {
-                      if (occupiedSlotMap.has(slotMin + s * 30)) {
+                      const futureApts = occupiedSlotMap.get(slotMin + s * 30) || [];
+                      if (futureApts.length >= maxConcurrent) {
                         wouldOverlap = true;
                         break;
                       }
                     }
                   }
 
-                  if (bookedApt) {
+                  if (isFull) {
+                    const lastApt = bookedApts[bookedApts.length - 1];
                     const statusBg: Record<string, string> = {
                       CONFIRMED: "bg-blue-100 border-blue-400",
                       PENDING: "bg-green-100 border-green-400",
                       COMPLETED: "bg-[#6040E0]/15 border-[#6040E0]",
                     };
-                    const style = statusBg[bookedApt.status] || "bg-gray-100 border-gray-400";
+                    const style = statusBg[lastApt.status] || "bg-gray-100 border-gray-400";
                     return (
                       <button
                         key={slot}
                         type="button"
                         className={`rounded-md border px-2 py-1.5 text-left cursor-pointer hover:opacity-80 transition-opacity ${style}`}
-                        onClick={() => onSelectAppointment?.(bookedApt)}
+                        onClick={() => onSelectAppointment?.(lastApt)}
                       >
                         <p className="text-xs font-medium">{slot}</p>
-                        <p className="text-[10px] truncate">{bookedApt.customerName}</p>
+                        <p className="text-[10px] truncate">{maxConcurrent > 1 ? `Full (${bookedApts.length}/${maxConcurrent})` : lastApt.customerName}</p>
                       </button>
                     );
                   }
@@ -1684,7 +1721,7 @@ function CreateAppointmentDialog({
                     >
                       <p className="text-xs font-medium">{slot}</p>
                       <p className={`text-[10px] ${isSelected ? "text-primary-foreground/80" : "text-green-600"}`}>
-                        Available
+                        {maxConcurrent > 1 && bookedApts.length > 0 ? `${bookedApts.length}/${maxConcurrent} booked` : "Available"}
                       </p>
                     </button>
                   );
@@ -1706,6 +1743,26 @@ function CreateAppointmentDialog({
               placeholder="Any additional notes..."
               rows={2}
             />
+          </div>
+
+          {/* SMS Consent */}
+          <div className="flex items-start gap-2">
+            <input
+              id="sms-consent-create"
+              type="checkbox"
+              checked={smsConsent}
+              onChange={(e) => setSmsConsent(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-gray-300 accent-primary shrink-0"
+            />
+            <label htmlFor="sms-consent-create" className="text-xs text-muted-foreground leading-relaxed">
+              By providing my phone number and submitting this form, I consent to receive SMS text messages from{" "}
+              <span className="font-medium text-foreground">{businessName || "this business"}</span>{" "}
+              regarding my appointment request, confirmations, reminders, promotions, and service updates. Message and data rates may apply. Message frequency may vary. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. See the Measy{" "}
+              <a href="https://measy.ca/pages/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:opacity-80">Privacy Policy</a>{" "}
+              and{" "}
+              <a href="https://measy.ca/pages/terms-of-service.html" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:opacity-80">Terms of Service</a>{" "}
+              for details on how your information is used.
+            </label>
           </div>
 
           {/* Summary */}

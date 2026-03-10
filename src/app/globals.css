@@ -62,3 +62,8 @@
   0% { transform: translateX(0); }
   100% { transform: translateX(-50%); }
 }
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+}

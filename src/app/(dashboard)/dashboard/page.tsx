@@ -65,10 +65,27 @@ function getDateRange(preset: Preset): { from: string; to: string } | null {
   }
 }
 
+interface BannerData {
+  url: string;
+  type: "image" | "video";
+  link: string | null;
+}
+
 export default function DashboardPage() {
   const [preset, setPreset] = useState<Preset>("this_week");
   const [dateMode, setDateMode] = useState<"scheduled" | "created">("created");
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const range = useMemo(() => getDateRange(preset), [preset]);
+
+  const { data: banner } = useQuery<BannerData | null>({
+    queryKey: ["dashboard-banner"],
+    queryFn: async () => {
+      const res = await fetch("/api/dashboard/banner");
+      const json = await res.json();
+      return json.data ?? null;
+    },
+    staleTime: 60_000,
+  });
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats", preset, dateMode],
@@ -85,8 +102,7 @@ export default function DashboardPage() {
       const json = await res.json();
       return json.data;
     },
-    refetchInterval: 30000,
-    refetchOnWindowFocus: true,
+    staleTime: 60000,
   });
 
   const callbackCount = stats?.callbackRequests ?? 0;
@@ -140,6 +156,52 @@ export default function DashboardPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold tracking-tight mb-6">Dashboard</h1>
+
+      {/* Admin Banner */}
+      {banner && !bannerDismissed && (
+        <div className="mb-6 relative rounded-xl overflow-hidden border shadow-sm">
+          <button
+            onClick={() => setBannerDismissed(true)}
+            className="absolute top-2 right-2 z-10 bg-black/50 text-white p-1 rounded-full hover:bg-black/70 transition-colors"
+            aria-label="Dismiss banner"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+          {banner.link ? (
+            <a href={banner.link} target="_blank" rel="noopener noreferrer" className="block">
+              {banner.type === "video" ? (
+                <video
+                  src={banner.url}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="w-full object-cover"
+                  style={{ maxHeight: 280 }}
+                />
+              ) : (
+                <img src={banner.url} alt="Announcement" className="w-full object-cover" style={{ maxHeight: 280 }} />
+              )}
+            </a>
+          ) : (
+            <>
+              {banner.type === "video" ? (
+                <video
+                  src={banner.url}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="w-full object-cover"
+                  style={{ maxHeight: 280 }}
+                />
+              ) : (
+                <img src={banner.url} alt="Announcement" className="w-full object-cover" style={{ maxHeight: 280 }} />
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Date Filter Presets + Date Mode Toggle */}
       <div className="flex flex-wrap items-center gap-2 mb-6">

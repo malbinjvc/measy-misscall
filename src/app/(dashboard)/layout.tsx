@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { TenantProvider } from "@/providers/tenant-provider";
 import { SessionGuard } from "@/components/shared/session-guard";
+import { ImpersonationBanner } from "@/components/shared/impersonation-banner";
 
 export default function DashboardLayout({
   children,
@@ -11,6 +12,7 @@ export default function DashboardLayout({
   return (
     <SessionGuard requiredRole="TENANT">
       <TenantProvider>
+        <ImpersonationBanner />
         <div className="min-h-screen bg-background">
           <Sidebar />
           <div className="lg:pl-64">

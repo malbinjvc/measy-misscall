@@ -1,21 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SmsStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { verifyTwilioWebhook } from "@/lib/twilio";
+import { validateTwilioSignature } from "@/lib/twilio";
 
 export async function POST(req: NextRequest) {
   try {
+    // Parse form data ONCE — reuse for both signature verification and data extraction.
+    // Cloning + re-reading can fail in Node.js due to body stream locking.
+    const formData = await req.formData();
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      params[key] = value.toString();
+    });
+
     // Validate Twilio webhook signature
-    const isValid = await verifyTwilioWebhook(req);
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const internalUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || internalUrl.origin;
+    const url = baseUrl + internalUrl.pathname + internalUrl.search;
+
+    const isValid = await validateTwilioSignature(signature, url, params);
     if (!isValid) {
       console.warn("Invalid Twilio signature on /api/twilio/sms-status");
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const formData = await req.formData();
-    const messageSid = formData.get("MessageSid") as string;
-    const messageStatus = formData.get("MessageStatus") as string;
-    const errorCode = formData.get("ErrorCode") as string | null;
+    const messageSid = params.MessageSid;
+    const messageStatus = params.MessageStatus;
+    const errorCode = params.ErrorCode || null;
 
     if (!messageSid) {
       return NextResponse.json({ error: "Missing MessageSid" }, { status: 400 });
@@ -35,7 +51,7 @@ export async function POST(req: NextRequest) {
       where: { twilioMessageSid: messageSid },
       data: {
         status,
-        errorCode: errorCode || null,
+        errorCode,
         deliveredAt: status === "DELIVERED" ? new Date() : undefined,
       },
     });

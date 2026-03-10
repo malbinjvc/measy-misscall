@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
     const { step, data } = onboardingStepSchema.parse(await req.json());
     const tenantId = session.user.tenantId;
 
+    // Derive base URL from request origin so Stripe redirects back to the same domain
+    const origin = req.headers.get("origin") || req.headers.get("referer")?.replace(/\/[^/]*$/, "") || process.env.NEXT_PUBLIC_APP_URL;
+    const baseUrl = origin?.replace(/\/$/, "") || "";
+
     // Handle backward navigation
     if (step === "GO_BACK") {
       const result = await prisma.$transaction(async (tx) => {
@@ -280,8 +284,8 @@ export async function POST(req: NextRequest) {
               customerId: stripeCustomerId,
               priceId: plan.stripePriceId,
               tenantId,
-              successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/onboarding?session_id={CHECKOUT_SESSION_ID}`,
-              cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/onboarding`,
+              successUrl: `${baseUrl}/dashboard/onboarding?session_id={CHECKOUT_SESSION_ID}`,
+              cancelUrl: `${baseUrl}/dashboard/onboarding`,
             });
 
             return NextResponse.json({
@@ -344,6 +348,17 @@ export async function POST(req: NextRequest) {
           .catch((err) => {
             console.warn("IVR audio generation failed (non-blocking):", err);
           });
+
+        // Fire-and-forget: load initial wallet funds ($15 CAD)
+        if (activeTenant.stripeCustomerId) {
+          import("@/lib/wallet")
+            .then(({ loadInitialFunds }) =>
+              loadInitialFunds(tenantId, activeTenant.stripeCustomerId!)
+            )
+            .catch((err) => {
+              console.warn("Initial wallet load failed (non-blocking):", err);
+            });
+        }
 
         break;
       }

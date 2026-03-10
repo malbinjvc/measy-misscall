@@ -6,8 +6,62 @@ import { Prisma } from "@prisma/client";
 import { createAppointmentSchema, updateAppointmentSchema } from "@/lib/validations";
 import { computeAppointmentPrice, computeMultiItemPrice, computeMultiItemDuration } from "@/lib/appointment-helpers";
 import { sanitizePagination, formatDateUTC } from "@/lib/utils";
-import { sendSmsWithConsent, buildConfirmationSmsBody } from "@/lib/sms";
+import { sendSmsWithConsent, buildConfirmationSmsBody, buildReminderSmsBody } from "@/lib/sms";
 import { z, ZodError } from "zod";
+
+const APP_TIMEZONE = "America/Toronto";
+
+/**
+ * Convert appointment date (UTC midnight) + startTime ("HH:mm") to absolute UTC timestamp.
+ * Same logic as the reminder cron uses.
+ */
+function appointmentToUtcMs(date: Date, startTime: string): number {
+  const d = new Date(date);
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) d.setUTCHours(12);
+  const torontoDate = d.toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: APP_TIMEZONE, timeZoneName: "shortOffset" });
+  const parts = formatter.formatToParts(d);
+  const offsetPart = parts.find((p) => p.type === "timeZoneName");
+  const offsetMatch = offsetPart?.value?.match(/GMT([+-]?\d+)/);
+  const offsetHours = offsetMatch ? parseInt(offsetMatch[1]) : -5;
+  const utc = new Date(`${torontoDate}T${startTime}:00.000Z`);
+  utc.setUTCHours(utc.getUTCHours() - offsetHours);
+  return utc.getTime();
+}
+
+/** Max hours before appointment to send an immediate reminder on late confirmations */
+const REMINDER_CUTOFF_HOURS = 12.5;
+
+/**
+ * Fire-and-forget: send immediate reminder + mark reminderSentAt when appointment
+ * is confirmed too late for the cron's 11.5-12.5h window to catch it.
+ */
+function maybeSendImmediateReminder(apt: {
+  id: string;
+  tenantId: string;
+  date: Date;
+  startTime: string;
+  customerPhone: string;
+  reminderSentAt: Date | null;
+}, tenant: { name: string; slug: string; assignedTwilioNumber: string }) {
+  if (apt.reminderSentAt) return; // already sent
+  const hoursUntil = (appointmentToUtcMs(apt.date, apt.startTime) - Date.now()) / (60 * 60 * 1000);
+  if (hoursUntil > REMINDER_CUTOFF_HOURS || hoursUntil < 1) return; // cron will handle it, or too late
+
+  const dateStr = formatDateUTC(apt.date);
+  const body = buildReminderSmsBody(tenant.name, tenant.slug, dateStr, apt.startTime);
+  sendSmsWithConsent({
+    tenantId: apt.tenantId,
+    to: apt.customerPhone,
+    from: tenant.assignedTwilioNumber,
+    body,
+    type: "APPOINTMENT_REMINDER",
+  })
+    .then(() =>
+      prisma.appointment.update({ where: { id: apt.id }, data: { reminderSentAt: new Date() } })
+    )
+    .catch((err) => console.error("Immediate reminder SMS error:", err));
+}
 
 const appointmentItemInclude = {
   service: true,
@@ -72,13 +126,18 @@ export async function GET(req: NextRequest) {
       const startOfMonth = new Date(Date.UTC(year, month, 1));
       const endOfMonth = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
 
-      const [appointments, businessHours] = await Promise.all([
+      const [appointments, businessHours, tenantSettings] = await Promise.all([
         prisma.appointment.findMany({
           where: { tenantId, date: { gte: startOfMonth, lte: endOfMonth } },
           orderBy: [{ date: "asc" }, { startTime: "asc" }],
           include: appointmentInclude,
+          take: 500, // Bounded: prevent excessive data for busy months
         }),
         prisma.businessHours.findMany({ where: { tenantId } }),
+        prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { maxConcurrentBookings: true },
+        }),
       ]);
 
       const enriched = appointments.map(enrichAppointment);
@@ -98,6 +157,7 @@ export async function GET(req: NextRequest) {
         data: grouped,
         businessHours,
         month: `${year}-${String(month + 1).padStart(2, "0")}`,
+        maxConcurrentBookings: tenantSettings?.maxConcurrentBookings ?? 1,
       });
     }
 
@@ -126,27 +186,58 @@ export async function GET(req: NextRequest) {
 
     const enriched = appointments.map(enrichAppointment);
 
-    // Compute total revenue from non-cancelled appointments
-    const revenueAppointments = await prisma.appointment.findMany({
-      where: { tenantId, status: { not: "CANCELLED" } },
-      include: appointmentInclude,
-    });
-    const totalRevenue = revenueAppointments.reduce(
-      (sum, apt) => {
-        if (apt.items && apt.items.length > 0) {
-          return sum + computeMultiItemPrice(apt.items);
-        }
-        if (apt.service) {
-          return sum + computeAppointmentPrice(
-            { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
-            apt.service,
-            apt.serviceOption
-          );
-        }
-        return sum;
-      },
-      0
-    );
+    // Revenue: computed at DB level via raw SQL — no rows loaded into memory
+    const revenueRows = await prisma.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
+      WITH single_item_rev AS (
+        SELECT COALESCE(SUM(
+          (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * a.quantity
+        ), 0)::float AS total
+        FROM "Appointment" a
+        LEFT JOIN "Service" s ON s.id = a."serviceId"
+        LEFT JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+        WHERE a."tenantId" = ${tenantId}
+          AND a.status != 'CANCELLED'
+          AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+      ),
+      single_sub_rev AS (
+        SELECT COALESCE(SUM(sso.price), 0)::float AS total
+        FROM "Appointment" a
+        JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+        JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+          AND sso.id = ANY(a."selectedSubOptions")
+        WHERE a."tenantId" = ${tenantId}
+          AND a.status != 'CANCELLED'
+          AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+      ),
+      multi_item_rev AS (
+        SELECT COALESCE(SUM(
+          (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * ai.quantity
+        ), 0)::float AS total
+        FROM "Appointment" a
+        JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+        LEFT JOIN "Service" s ON s.id = ai."serviceId"
+        LEFT JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+        WHERE a."tenantId" = ${tenantId}
+          AND a.status != 'CANCELLED'
+      ),
+      multi_sub_rev AS (
+        SELECT COALESCE(SUM(sso.price), 0)::float AS total
+        FROM "Appointment" a
+        JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+        JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+        JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+          AND sso.id = ANY(ai."selectedSubOptions")
+        WHERE a."tenantId" = ${tenantId}
+          AND a.status != 'CANCELLED'
+      )
+      SELECT
+        (SELECT total FROM single_item_rev) AS single_rev,
+        (SELECT total FROM multi_item_rev) AS multi_rev,
+        (SELECT total FROM single_sub_rev) AS sub_rev,
+        (SELECT total FROM multi_sub_rev) AS multi_sub_rev
+    `;
+    const revRow = revenueRows[0];
+    const totalRevenue = (revRow?.single_rev || 0) + (revRow?.multi_rev || 0) + (revRow?.sub_rev || 0) + (revRow?.multi_sub_rev || 0);
 
     const totalAll = statusCounts.reduce((sum, item) => sum + item._count, 0);
 
@@ -188,7 +279,7 @@ export async function POST(req: NextRequest) {
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { autoConfirmAppointments: true },
+      select: { autoConfirmAppointments: true, maxConcurrentBookings: true },
     });
 
     // Normalize items: use items array if provided, otherwise wrap legacy fields
@@ -202,15 +293,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "At least one service is required" }, { status: 400 });
     }
 
+    // Batch fetch all services and options in 2 queries (no N+1)
+    const serviceIds = Array.from(new Set(rawItems.map((item) => item.serviceId)));
+    const optionIds = Array.from(new Set(rawItems.map((item) => item.serviceOptionId).filter(Boolean))) as string[];
+
+    const [servicesList, optionsList] = await Promise.all([
+      prisma.service.findMany({
+        where: { id: { in: serviceIds }, tenantId, isActive: true },
+      }),
+      optionIds.length > 0
+        ? prisma.serviceOption.findMany({
+            where: { id: { in: optionIds }, isActive: true },
+            include: { subOptions: { where: { isActive: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const serviceMap = new Map(servicesList.map((s) => [s.id, s]));
+    const optionMap = new Map(optionsList.map((o) => [o.id, o]));
+
     // Validate each item and compute aggregate duration
     let totalDuration = 0;
     const validatedItems: { serviceId: string; serviceOptionId: string | null; quantity: number; selectedSubOptions: string[]; sortOrder: number }[] = [];
 
     for (let i = 0; i < rawItems.length; i++) {
       const item = rawItems[i];
-      const service = await prisma.service.findFirst({
-        where: { id: item.serviceId, tenantId, isActive: true },
-      });
+      const service = serviceMap.get(item.serviceId);
       if (!service) {
         return NextResponse.json({ success: false, error: `Service not found for item ${i + 1}` }, { status: 404 });
       }
@@ -221,11 +329,8 @@ export async function POST(req: NextRequest) {
       let selectedSubOptions: string[] = [];
 
       if (item.serviceOptionId) {
-        const option = await prisma.serviceOption.findFirst({
-          where: { id: item.serviceOptionId, serviceId: service.id, isActive: true },
-          include: { subOptions: { where: { isActive: true } } },
-        });
-        if (!option) {
+        const option = optionMap.get(item.serviceOptionId);
+        if (!option || option.serviceId !== service.id) {
           return NextResponse.json({ success: false, error: `Service option not found for item ${i + 1}` }, { status: 404 });
         }
         if (option.duration) duration = option.duration;
@@ -234,9 +339,9 @@ export async function POST(req: NextRequest) {
         if (quantity > option.maxQuantity) quantity = option.maxQuantity;
 
         if (item.selectedSubOptionIds?.length) {
-          const validSubIds = option.subOptions.map((s) => s.id);
+          const validSubIds = new Set(option.subOptions.map((s) => s.id));
           for (const subId of item.selectedSubOptionIds) {
-            if (!validSubIds.includes(subId)) {
+            if (!validSubIds.has(subId)) {
               return NextResponse.json({ success: false, error: `Invalid sub-option in item ${i + 1}` }, { status: 400 });
             }
           }
@@ -253,6 +358,27 @@ export async function POST(req: NextRequest) {
     const startMinutes = hours * 60 + minutes;
     const endMinutes = startMinutes + totalDuration;
     const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+    // Check concurrent booking capacity before creating
+    const appointmentDate = new Date(validated.date + "T00:00:00.000Z");
+    const endOfDay = new Date(validated.date + "T23:59:59.999Z");
+    const overlappingCount = await prisma.appointment.count({
+      where: {
+        tenantId,
+        date: { gte: appointmentDate, lte: endOfDay },
+        status: { not: "CANCELLED" },
+        AND: [
+          { startTime: { lt: endTime } },
+          { endTime: { gt: validated.startTime } },
+        ],
+      },
+    });
+    if (overlappingCount >= (tenant?.maxConcurrentBookings ?? 1)) {
+      return NextResponse.json(
+        { success: false, error: "This time slot is fully booked" },
+        { status: 409 }
+      );
+    }
 
     const appointment = await prisma.appointment.create({
       data: {
@@ -284,6 +410,7 @@ export async function POST(req: NextRequest) {
         vehicleMake: validated.vehicleMake || null,
         vehicleModel: validated.vehicleModel || null,
         appointmentPreference: validated.appointmentPreference || null,
+        smsConsent: validated.smsConsent ?? false,
         status: tenant?.autoConfirmAppointments ? "CONFIRMED" : "PENDING",
       },
       include: appointmentInclude,
@@ -330,7 +457,7 @@ export async function PATCH(req: NextRequest) {
       const beforeAppointments = status === "CONFIRMED"
         ? await prisma.appointment.findMany({
             where: { id: { in: ids }, tenantId: session.user.tenantId, status: "PENDING" },
-            select: { id: true, customerPhone: true, date: true, startTime: true, smsConsent: true },
+            select: { id: true, customerPhone: true, date: true, startTime: true, smsConsent: true, reminderSentAt: true },
           })
         : [];
 
@@ -356,6 +483,12 @@ export async function PATCH(req: NextRequest) {
               body,
               type: "APPOINTMENT_CONFIRMATION",
             }).catch((err) => console.error("Bulk confirmation SMS error:", err));
+
+            // Send immediate reminder if appointment is within 12.5h (cron window already passed)
+            maybeSendImmediateReminder(
+              { id: apt.id, tenantId: session.user.tenantId, date: apt.date, startTime: apt.startTime, customerPhone: apt.customerPhone, reminderSentAt: apt.reminderSentAt },
+              { name: tenant.name, slug: tenant.slug, assignedTwilioNumber: tenant.assignedTwilioNumber }
+            );
           }
         }
       }
@@ -422,7 +555,12 @@ export async function PATCH(req: NextRequest) {
       const appointmentDate = new Date(validated.date + "T00:00:00.000Z");
       const endOfDay = new Date(validated.date + "T23:59:59.999Z");
 
-      const overlapping = await prisma.appointment.findFirst({
+      // Count overlapping appointments for concurrent capacity check
+      const tenantInfo = await prisma.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { maxConcurrentBookings: true },
+      });
+      const overlappingCount = await prisma.appointment.count({
         where: {
           tenantId: session.user.tenantId,
           id: { not: id },
@@ -435,9 +573,9 @@ export async function PATCH(req: NextRequest) {
         },
       });
 
-      if (overlapping) {
+      if (overlappingCount >= (tenantInfo?.maxConcurrentBookings ?? 1)) {
         return NextResponse.json(
-          { success: false, error: "This time slot is already booked" },
+          { success: false, error: "This time slot is fully booked" },
           { status: 409 }
         );
       }
@@ -471,6 +609,12 @@ export async function PATCH(req: NextRequest) {
           body,
           type: "APPOINTMENT_CONFIRMATION",
         }).catch((err) => console.error("Confirmation SMS error:", err));
+
+        // Send immediate reminder if appointment is within 12.5h (cron window already passed)
+        maybeSendImmediateReminder(
+          { id: updated.id, tenantId: session.user.tenantId, date: updated.date, startTime: updated.startTime, customerPhone: updated.customerPhone, reminderSentAt: updated.reminderSentAt },
+          { name: tenant.name, slug: tenant.slug, assignedTwilioNumber: tenant.assignedTwilioNumber }
+        );
       }
     }
 

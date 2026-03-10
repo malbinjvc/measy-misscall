@@ -16,6 +16,7 @@ interface SectionListProps {
   onRemoveElement: (sectionId: string, elementId: string) => void;
   onUpdateElement: (sectionId: string, elementId: string, updates: Partial<SectionElement>) => void;
   onReorderElements: (sectionId: string, elementIds: string[]) => void;
+  onDuplicate?: (id: string) => void;
 }
 
 export function SectionList({
@@ -28,6 +29,7 @@ export function SectionList({
   onRemoveElement,
   onUpdateElement,
   onReorderElements,
+  onDuplicate,
 }: SectionListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -71,6 +73,7 @@ export function SectionList({
               onRemoveElement={(elementId) => onRemoveElement(section.id, elementId)}
               onUpdateElement={(elementId, updates) => onUpdateElement(section.id, elementId, updates)}
               onReorderElements={(elementIds) => onReorderElements(section.id, elementIds)}
+              onDuplicate={onDuplicate ? () => onDuplicate(section.id) : undefined}
               isPinned={index === 0 && section.type === "hero"}
             />
           ))}

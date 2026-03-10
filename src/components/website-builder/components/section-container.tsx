@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Eye, EyeOff, Trash2, ChevronDown, ChevronRight, Image, Star, Wrench, LayoutGrid } from "lucide-react";
+import { GripVertical, Eye, EyeOff, Trash2, Copy, ChevronDown, ChevronRight, Image, Star, Wrench, LayoutGrid, Film } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { WebsiteSectionConfig, SectionElement } from "@/types";
@@ -10,6 +10,7 @@ import { SECTION_TYPE_LABELS } from "../constants";
 import { HeroEditor } from "../section-editors/hero-editor";
 import { ReviewsEditor } from "../section-editors/reviews-editor";
 import { ServicesEditor } from "../section-editors/services-editor";
+import { ReelEditor } from "../section-editors/reel-editor";
 import { ColorPicker } from "../editors/color-picker";
 import { ElementList } from "./element-list";
 import { AddElementBar } from "./add-element-bar";
@@ -19,6 +20,7 @@ const SECTION_ICONS: Record<string, React.ElementType> = {
   reviews: Star,
   services: Wrench,
   custom: LayoutGrid,
+  reel: Film,
 };
 
 interface SectionContainerProps {
@@ -32,6 +34,7 @@ interface SectionContainerProps {
   onRemoveElement?: (elementId: string) => void;
   onUpdateElement?: (elementId: string, updates: Partial<SectionElement>) => void;
   onReorderElements?: (elementIds: string[]) => void;
+  onDuplicate?: () => void;
   isPinned?: boolean;
 }
 
@@ -46,6 +49,7 @@ export function SectionContainer({
   onRemoveElement,
   onUpdateElement,
   onReorderElements,
+  onDuplicate,
   isPinned,
 }: SectionContainerProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -61,7 +65,7 @@ export function SectionContainer({
 
   const Icon = SECTION_ICONS[section.type] || LayoutGrid;
   const isBuiltIn = ["hero", "reviews", "services"].includes(section.type);
-  const displayName = section.type === "custom" ? section.name : (SECTION_TYPE_LABELS[section.type] || section.type);
+  const displayName = section.type === "custom" || section.type === "reel" ? section.name : (SECTION_TYPE_LABELS[section.type] || section.type);
 
   return (
     <div ref={setNodeRef} style={style} className={`rounded-lg border ${!section.visible ? "opacity-50" : ""}`}>
@@ -86,9 +90,14 @@ export function SectionContainer({
         <span className="text-sm font-medium flex-1 truncate">{displayName}</span>
 
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <button onClick={onToggleVisibility} className="p-1 rounded hover:bg-muted" title={section.visible ? "Hide" : "Show"}>
+          <button onClick={onToggleVisibility} className="p-1 rounded hover:bg-muted" title={section.visible ? "Hide section" : "Show section"}>
             {section.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />}
           </button>
+          {!isBuiltIn && onDuplicate && (
+            <button onClick={onDuplicate} className="p-1 rounded hover:bg-muted" title="Duplicate section">
+              <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
           {!isBuiltIn && (
             <button onClick={onDelete} className="p-1 rounded hover:bg-red-50 text-red-500" title="Delete section">
               <Trash2 className="h-3.5 w-3.5" />
@@ -111,6 +120,11 @@ export function SectionContainer({
           )}
           {section.type === "services" && (
             <ServicesEditor section={section} onChange={onUpdate} />
+          )}
+
+          {/* Reel section editor */}
+          {section.type === "reel" && (
+            <ReelEditor section={section} onChange={onUpdate} />
           )}
 
           {/* Custom section: section-level controls + elements */}
@@ -142,6 +156,7 @@ export function SectionContainer({
                       min={0}
                       max={200}
                       className="h-8 text-xs"
+                      title="Space around the section content (0-200 pixels)"
                     />
                   </div>
                 </div>

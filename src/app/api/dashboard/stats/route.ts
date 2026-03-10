@@ -2,12 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { computeAppointmentPrice, computeMultiItemPrice } from "@/lib/appointment-helpers";
+import { Prisma } from "@prisma/client";
 
 /**
  * Get Toronto's UTC offset in hours for a given date.
- * Uses noon UTC to avoid day-boundary issues.
- * Returns 5 for EST, 4 for EDT.
  */
 function getTorontoOffsetHours(dateStr: string): number {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -25,14 +23,12 @@ function getTorontoOffsetHours(dateStr: string): number {
   return utcHour - torHour;
 }
 
-/** Midnight Toronto time as UTC Date */
 function torontoStartOfDay(dateStr: string): Date {
   const [y, m, d] = dateStr.split("-").map(Number);
   const offset = getTorontoOffsetHours(dateStr);
   return new Date(Date.UTC(y, m - 1, d, offset));
 }
 
-/** 23:59:59.999 Toronto time as UTC Date */
 function torontoEndOfDay(dateStr: string): Date {
   const start = torontoStartOfDay(dateStr);
   return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
@@ -47,23 +43,32 @@ export async function GET(request: NextRequest) {
 
     const tenantId = session.user.tenantId;
     const { searchParams } = new URL(request.url);
-    const from = searchParams.get("from"); // YYYY-MM-DD
-    const to = searchParams.get("to");     // YYYY-MM-DD
-    const dateMode = searchParams.get("dateMode") || "scheduled"; // "scheduled" or "created"
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    const dateMode = searchParams.get("dateMode") || "scheduled";
 
     const hasRange = from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
 
-    // Appointment date filter — switches between booked date and creation date
     const appointmentDateFilter = hasRange
       ? dateMode === "created"
         ? { createdAt: { gte: torontoStartOfDay(from), lte: torontoEndOfDay(to) } }
         : { date: { gte: new Date(from + "T00:00:00.000Z"), lte: new Date(to + "T23:59:59.999Z") } }
       : {};
 
-    // Calls and SMS use createdAt (actual timestamps) — filter using Toronto timezone boundaries
     const createdAtFilter = hasRange
       ? { createdAt: { gte: torontoStartOfDay(from), lte: torontoEndOfDay(to) } }
       : {};
+
+    // Build date SQL for raw revenue query.
+    // Columns are "timestamp without time zone" but store UTC values. Prisma
+    // passes JS Date as timestamptz; PG's server timezone (America/Toronto)
+    // causes wrong implicit conversion. AT TIME ZONE 'UTC' strips the offset
+    // correctly so the comparison matches the stored UTC timestamps.
+    const dateFilterSql = hasRange
+      ? dateMode === "created"
+        ? Prisma.sql`AND a."createdAt" >= (${torontoStartOfDay(from)} AT TIME ZONE 'UTC') AND a."createdAt" <= (${torontoEndOfDay(to)} AT TIME ZONE 'UTC')`
+        : Prisma.sql`AND a."date" >= (${new Date(from + "T00:00:00.000Z")} AT TIME ZONE 'UTC') AND a."date" <= (${new Date(to + "T23:59:59.999Z")} AT TIME ZONE 'UTC')`
+      : Prisma.empty;
 
     const [
       missedCalls,
@@ -73,7 +78,7 @@ export async function GET(request: NextRequest) {
       noShowAppointments,
       totalSms,
       callbackRequests,
-      revenueAppointments,
+      revenueRows,
     ] = await Promise.all([
       prisma.call.count({
         where: { tenantId, status: "MISSED", ...createdAtFilter },
@@ -81,7 +86,6 @@ export async function GET(request: NextRequest) {
       prisma.appointment.count({
         where: { tenantId, ...appointmentDateFilter },
       }),
-      // Pending — always unfiltered (current pending regardless of date range)
       prisma.appointment.count({
         where: { tenantId, status: "PENDING" },
       }),
@@ -94,52 +98,70 @@ export async function GET(request: NextRequest) {
       prisma.smsLog.count({
         where: { tenantId, type: { not: "OTP_VERIFICATION" }, ...createdAtFilter },
       }),
-      // Callback banner — always unfiltered (current pending)
       prisma.call.count({
         where: { tenantId, ivrResponse: "CALLBACK", callbackHandled: false },
       }),
-      // Revenue: all non-cancelled appointments with full pricing data
-      prisma.appointment.findMany({
-        where: { tenantId, status: { not: "CANCELLED" }, ...appointmentDateFilter },
-        select: {
-          quantity: true,
-          selectedSubOptions: true,
-          service: { select: { price: true } },
-          serviceOption: {
-            select: {
-              price: true,
-              subOptions: { where: { isActive: true }, select: { id: true, price: true } },
-            },
-          },
-          items: {
-            select: {
-              quantity: true,
-              selectedSubOptions: true,
-              service: { select: { price: true, duration: true } },
-              serviceOption: {
-                select: {
-                  price: true,
-                  duration: true,
-                  subOptions: { where: { isActive: true }, select: { id: true, price: true } },
-                },
-              },
-            },
-          },
-        },
-      }),
+      // Revenue: full SQL calculation covering single-item + multi-item + sub-options
+      // Single-item revenue: (service.price + option.price) * quantity
+      // Multi-item revenue: SUM per item of (service.price + option.price) * quantity
+      // Sub-option revenue: SUM of selected sub-option prices (via unnest on the array)
+      prisma.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
+        WITH single_item_rev AS (
+          SELECT COALESCE(SUM(
+            (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * a.quantity
+          ), 0)::float AS total
+          FROM "Appointment" a
+          LEFT JOIN "Service" s ON s.id = a."serviceId"
+          LEFT JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+            ${dateFilterSql}
+        ),
+        single_sub_rev AS (
+          SELECT COALESCE(SUM(sso.price), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+          JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+            AND sso.id = ANY(a."selectedSubOptions")
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+            ${dateFilterSql}
+        ),
+        multi_item_rev AS (
+          SELECT COALESCE(SUM(
+            (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * ai.quantity
+          ), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+          LEFT JOIN "Service" s ON s.id = ai."serviceId"
+          LEFT JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            ${dateFilterSql}
+        ),
+        multi_sub_rev AS (
+          SELECT COALESCE(SUM(sso.price), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+          JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+          JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+            AND sso.id = ANY(ai."selectedSubOptions")
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            ${dateFilterSql}
+        )
+        SELECT
+          (SELECT total FROM single_item_rev) AS single_rev,
+          (SELECT total FROM multi_item_rev) AS multi_rev,
+          (SELECT total FROM single_sub_rev) AS sub_rev,
+          (SELECT total FROM multi_sub_rev) AS multi_sub_rev
+      `,
     ]);
 
-    const totalRevenue = revenueAppointments.reduce((sum, apt) => {
-      if (apt.items && apt.items.length > 0) {
-        return sum + computeMultiItemPrice(apt.items);
-      }
-      if (!apt.service) return sum;
-      return sum + computeAppointmentPrice(
-        { quantity: apt.quantity, selectedSubOptions: apt.selectedSubOptions || [] },
-        apt.service,
-        apt.serviceOption
-      );
-    }, 0);
+    const row = revenueRows[0];
+    const totalRevenue = (row?.single_rev || 0) + (row?.multi_rev || 0) + (row?.sub_rev || 0) + (row?.multi_sub_rev || 0);
 
     return NextResponse.json({
       success: true,

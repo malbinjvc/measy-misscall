@@ -27,6 +27,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Idempotency: Stripe can retry the same event (at 1hr, 6hr, 24hr).
+    // updateMany calls are naturally idempotent. Admin logs dedup via
+    // stripeEventId stored in metadata JSON, queried before logging.
+    const eventId = event.id;
+
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -90,20 +95,27 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // Log when a tenant schedules cancellation
+        // Log when a tenant schedules cancellation (dedup by stripeEventId in metadata)
         if (sub.cancel_at_period_end === true) {
           const cancelingTenant = await prisma.subscription.findFirst({
             where: { stripeSubscriptionId: sub.id as string },
             select: { tenantId: true, tenant: { select: { name: true } } },
           });
           if (cancelingTenant) {
-            await logAdminAction({
-              action: "SUBSCRIPTION_CANCELING",
-              details: `Tenant "${cancelingTenant.tenant.name}" scheduled subscription cancellation at period end`,
-              tenantId: cancelingTenant.tenantId,
-              tenantName: cancelingTenant.tenant.name,
-              metadata: { stripeSubscriptionId: sub.id as string },
-            });
+            const [existing] = await prisma.$queryRaw<[{ count: number }]>`
+              SELECT COUNT(*)::int as count FROM "AdminLog"
+              WHERE action = 'SUBSCRIPTION_CANCELING'
+                AND metadata->>'stripeEventId' = ${eventId}
+            `;
+            if (existing.count === 0) {
+              await logAdminAction({
+                action: "SUBSCRIPTION_CANCELING",
+                details: `Tenant "${cancelingTenant.tenant.name}" scheduled subscription cancellation at period end`,
+                tenantId: cancelingTenant.tenantId,
+                tenantName: cancelingTenant.tenant.name,
+                metadata: { stripeSubscriptionId: sub.id as string, stripeEventId: eventId },
+              });
+            }
           }
         }
         break;
@@ -123,13 +135,20 @@ export async function POST(req: NextRequest) {
         });
 
         if (canceledTenant) {
-          await logAdminAction({
-            action: "SUBSCRIPTION_CANCELED",
-            details: `Tenant "${canceledTenant.tenant.name}" subscription was canceled`,
-            tenantId: canceledTenant.tenantId,
-            tenantName: canceledTenant.tenant.name,
-            metadata: { stripeSubscriptionId: deletedSub.id as string },
-          });
+          const [existing] = await prisma.$queryRaw<[{ count: number }]>`
+            SELECT COUNT(*)::int as count FROM "AdminLog"
+            WHERE action = 'SUBSCRIPTION_CANCELED'
+              AND metadata->>'stripeEventId' = ${eventId}
+          `;
+          if (existing.count === 0) {
+            await logAdminAction({
+              action: "SUBSCRIPTION_CANCELED",
+              details: `Tenant "${canceledTenant.tenant.name}" subscription was canceled`,
+              tenantId: canceledTenant.tenantId,
+              tenantName: canceledTenant.tenant.name,
+              metadata: { stripeSubscriptionId: deletedSub.id as string, stripeEventId: eventId },
+            });
+          }
         }
         break;
       }
