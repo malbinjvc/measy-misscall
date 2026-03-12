@@ -6,6 +6,7 @@ import { platformSettingsSchema, testTwilioSchema } from "@/lib/validations";
 import { testTwilioConnection, clearTwilioCache } from "@/lib/twilio";
 import { getErrorMessage } from "@/lib/errors";
 import { encrypt, decrypt, isEncrypted } from "@/lib/crypto";
+import { clearMaintenanceCache } from "@/lib/maintenance";
 
 const sensitiveFields = ["sharedTwilioToken", "stripeSecretKey", "stripeWebhookSecret", "elevenlabsApiKey"] as const;
 
@@ -75,12 +76,14 @@ export async function PATCH(req: NextRequest) {
     const validated = platformSettingsSchema.partial().parse(body);
 
     // Encrypt sensitive fields before saving to DB.
-    // Skip masked values (****...) — these are returned by GET and should not overwrite real secrets.
+    // Safety: remove any value that is empty, contains "****" (masked placeholder), or looks suspicious.
+    // The frontend should only send sensitive fields when the user explicitly typed a new value.
     for (const field of sensitiveFields) {
       const val = (validated as Record<string, unknown>)[field];
-      if (val && typeof val === "string") {
-        if (val.startsWith("****")) {
-          // Masked placeholder — remove from update so the real value is preserved
+      if (val === undefined || val === null) continue;
+      if (typeof val === "string") {
+        // Remove empty strings and any value containing mask characters
+        if (!val.trim() || val.includes("****")) {
           delete (validated as Record<string, unknown>)[field];
         } else if (!isEncrypted(val)) {
           (validated as Record<string, string>)[field] = encrypt(val);
@@ -94,8 +97,9 @@ export async function PATCH(req: NextRequest) {
       create: { id: "platform-settings", ...validated },
     });
 
-    // Clear cached Twilio client so new credentials take effect
+    // Clear caches so new settings take effect immediately
     clearTwilioCache();
+    clearMaintenanceCache();
 
     // Decrypt then mask secrets in the response
     const decrypted = decryptSettings(settings);

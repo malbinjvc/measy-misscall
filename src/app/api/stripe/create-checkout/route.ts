@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const { planId } = checkoutSchema.parse(await req.json());
+    const { planId, billingInterval } = checkoutSchema.parse(await req.json());
     const tenantId = session.user.tenantId;
 
     // Atomic read of plan + tenant, then conditional Stripe customer creation
@@ -22,8 +22,18 @@ export async function POST(req: NextRequest) {
       return { plan, tenant };
     });
 
-    if (!plan || !plan.stripePriceId) {
-      return NextResponse.json({ success: false, error: "Invalid plan" }, { status: 400 });
+    // Pick the right Stripe price based on billing interval
+    const priceId = billingInterval === "monthly"
+      ? plan?.monthlyStripePriceId
+      : plan?.stripePriceId;
+
+    if (!plan || !priceId) {
+      return NextResponse.json(
+        { success: false, error: billingInterval === "monthly" && !plan?.monthlyStripePriceId
+          ? "Monthly billing not available for this plan"
+          : "Invalid plan" },
+        { status: 400 }
+      );
     }
 
     if (!tenant) {
@@ -45,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     const checkoutSession = await createCheckoutSession({
       customerId: stripeCustomerId,
-      priceId: plan.stripePriceId,
+      priceId,
       tenantId,
       successUrl: `${baseUrl}/dashboard/billing?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${baseUrl}/dashboard/billing`,

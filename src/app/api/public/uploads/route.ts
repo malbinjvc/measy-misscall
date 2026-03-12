@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { uploadFile } from "@/lib/storage";
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm"];
@@ -62,20 +62,15 @@ export async function POST(req: NextRequest) {
     const ext = path.extname(file.name) || `.${file.type.split("/")[1]}`;
     const filename = `review-${Date.now()}${ext}`;
 
-    // Ensure uploads/reviews directory exists
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "reviews");
-    await mkdir(uploadsDir, { recursive: true });
-
-    // Write file to disk
-    const filePath = path.join(uploadsDir, filename);
-    await writeFile(filePath, buffer);
+    // Upload to GCS (production) or local filesystem (dev)
+    const result = await uploadFile(buffer, filename, "uploads/reviews", file.type);
 
     // Determine media type
     const mediaType = ALLOWED_VIDEO_TYPES.includes(file.type) ? "video" : "image";
 
     return NextResponse.json({
       success: true,
-      data: { url: `/uploads/reviews/${filename}`, mediaType },
+      data: { url: result.url, mediaType },
     });
   } catch (error) {
     console.error("Public upload error:", error);

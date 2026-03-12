@@ -25,6 +25,8 @@ import {
   FileText,
   X,
   Download,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
@@ -51,6 +53,14 @@ interface Ticket {
   _count?: { messages: number };
   createdAt: string;
   updatedAt: string;
+}
+
+interface PaginatedResponse {
+  data: Ticket[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 interface PendingFile {
@@ -205,6 +215,7 @@ export default function SupportPage() {
   const [view, setView] = useState<View>("list");
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [page, setPage] = useState(1);
 
   // Create form state
   const [subject, setSubject] = useState("");
@@ -221,17 +232,31 @@ export default function SupportPage() {
 
   const [adminTyping, setAdminTyping] = useState(false);
 
-  const { data: tickets, isLoading } = useQuery<Ticket[]>({
-    queryKey: ["support-tickets", filterStatus],
+  const { data: ticketsResponse, isLoading } = useQuery<PaginatedResponse>({
+    queryKey: ["support-tickets", filterStatus, page],
     queryFn: async () => {
-      const params = filterStatus !== "all" ? `?status=${filterStatus}` : "";
-      const res = await fetch(`/api/support/tickets${params}`);
+      const params = new URLSearchParams();
+      if (filterStatus !== "all") params.set("status", filterStatus);
+      params.set("page", String(page));
+      params.set("pageSize", "50");
+      const qs = params.toString();
+      const res = await fetch(`/api/support/tickets?${qs}`);
       const json = await res.json();
-      return json.data ?? [];
+      return {
+        data: json.data ?? [],
+        total: json.total ?? 0,
+        page: json.page ?? 1,
+        pageSize: json.pageSize ?? 50,
+        totalPages: json.totalPages ?? 1,
+      };
     },
     staleTime: 15000,
     refetchInterval: 30000,
   });
+
+  const tickets = ticketsResponse?.data;
+  const totalPages = ticketsResponse?.totalPages ?? 1;
+  const total = ticketsResponse?.total ?? 0;
 
   const { data: ticketDetail, isLoading: detailLoading } = useQuery<Ticket>({
     queryKey: ["support-ticket", selectedTicketId],
@@ -510,7 +535,7 @@ export default function SupportPage() {
         {["all", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((s) => (
           <button
             key={s}
-            onClick={() => setFilterStatus(s)}
+            onClick={() => { setFilterStatus(s); setPage(1); }}
             className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
               filterStatus === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
@@ -556,6 +581,15 @@ export default function SupportPage() {
               </Card>
             );
           })}
+        </div>
+      )}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4">
+          <p className="text-sm text-muted-foreground">Page {page} of {totalPages} ({total} total)</p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page <= 1}><ChevronLeft className="h-4 w-4" /></Button>
+            <Button variant="outline" size="sm" onClick={() => setPage(page + 1)} disabled={page >= totalPages}><ChevronRight className="h-4 w-4" /></Button>
+          </div>
         </div>
       )}
     </div>

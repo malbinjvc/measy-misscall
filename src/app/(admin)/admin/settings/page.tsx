@@ -73,10 +73,12 @@ export default function AdminSettingsPage() {
 }
 
 function SettingsForm({ settings, mutation }: { settings: PlatformSettings; mutation: SettingsMutation }) {
+  // IMPORTANT: Sensitive fields are initialized as empty strings, NOT with masked values.
+  // We only send sensitive fields to the backend if the user explicitly typed a new value.
   const [form, setForm] = useState({
     sharedTwilioSid: settings.sharedTwilioSid || "",
-    sharedTwilioToken: settings.sharedTwilioToken || "",
-    elevenlabsApiKey: settings.elevenlabsApiKey || "",
+    sharedTwilioToken: "",
+    elevenlabsApiKey: "",
     elevenlabsVoiceId: settings.elevenlabsVoiceId || "",
     dashboardBannerUrl: settings.dashboardBannerUrl || null as string | null,
     dashboardBannerType: settings.dashboardBannerType || "image",
@@ -84,9 +86,15 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
     dashboardBannerEnabled: settings.dashboardBannerEnabled || false,
     maintenanceMode: settings.maintenanceMode || false,
   });
+  // Track which sensitive fields the user has explicitly changed
+  const [dirtySecrets, setDirtySecrets] = useState<Set<string>>(new Set());
   const [bannerUploading, setBannerUploading] = useState(false);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState("");
+
+  // Whether a credential is already saved in the DB (masked value from GET starts with ****)
+  const hasTwilioToken = !!(settings.sharedTwilioToken && settings.sharedTwilioToken.startsWith("****"));
+  const hasElevenlabsKey = !!(settings.elevenlabsApiKey && settings.elevenlabsApiKey.startsWith("****"));
 
   const isConnected = !!(settings.sharedTwilioSid && settings.sharedTwilioToken);
 
@@ -163,9 +171,15 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
               <Input
                 type="password"
                 value={form.sharedTwilioToken}
-                onChange={(e) => setForm((prev) => ({ ...prev, sharedTwilioToken: e.target.value }))}
-                placeholder="Enter your Twilio Auth Token"
+                onChange={(e) => {
+                  setForm((prev) => ({ ...prev, sharedTwilioToken: e.target.value }));
+                  setDirtySecrets((prev) => new Set(prev).add("sharedTwilioToken"));
+                }}
+                placeholder={hasTwilioToken ? "Saved (enter new value to replace)" : "Enter your Twilio Auth Token"}
               />
+              {hasTwilioToken && !dirtySecrets.has("sharedTwilioToken") && (
+                <p className="text-xs text-green-600">Current token: {settings.sharedTwilioToken}</p>
+              )}
             </div>
 
             {/* Test result */}
@@ -205,7 +219,7 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
                 </CardTitle>
                 <CardDescription>Configure ElevenLabs for high-quality IVR voice generation</CardDescription>
               </div>
-              {form.elevenlabsApiKey ? (
+              {hasElevenlabsKey || form.elevenlabsApiKey ? (
                 <span className="flex items-center gap-1.5 text-sm font-medium text-green-600">
                   <CheckCircle2 className="h-4 w-4" /> Configured
                 </span>
@@ -222,9 +236,15 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
               <Input
                 type="password"
                 value={form.elevenlabsApiKey}
-                onChange={(e) => setForm((prev) => ({ ...prev, elevenlabsApiKey: e.target.value }))}
-                placeholder="Enter your ElevenLabs API key"
+                onChange={(e) => {
+                  setForm((prev) => ({ ...prev, elevenlabsApiKey: e.target.value }));
+                  setDirtySecrets((prev) => new Set(prev).add("elevenlabsApiKey"));
+                }}
+                placeholder={hasElevenlabsKey ? "Saved (enter new value to replace)" : "Enter your ElevenLabs API key"}
               />
+              {hasElevenlabsKey && !dirtySecrets.has("elevenlabsApiKey") && (
+                <p className="text-xs text-green-600">Current key: {settings.elevenlabsApiKey}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Voice ID <span className="text-muted-foreground font-normal">(optional)</span></Label>
@@ -431,7 +451,13 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
           </div>
         )}
 
-        <Button onClick={() => mutation.mutate(form)} disabled={mutation.isPending}>
+        <Button onClick={() => {
+          // Only include sensitive fields if the user explicitly changed them
+          const payload = { ...form };
+          if (!dirtySecrets.has("sharedTwilioToken")) delete (payload as Record<string, unknown>).sharedTwilioToken;
+          if (!dirtySecrets.has("elevenlabsApiKey")) delete (payload as Record<string, unknown>).elevenlabsApiKey;
+          mutation.mutate(payload as SettingsFormData);
+        }} disabled={mutation.isPending}>
           {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Save Settings
         </Button>

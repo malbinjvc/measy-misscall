@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { hasFeature } from "@/lib/feature-gate";
 
 export async function GET(
   req: NextRequest,
@@ -56,10 +57,8 @@ export async function GET(
       _count: { rating: true },
     });
 
-    // Determine AI chatbot eligibility (Professional+ plans: sortOrder >= 2)
-    const hasAiChat = tenant.subscription?.plan
-      ? tenant.subscription.plan.sortOrder >= 2
-      : false;
+    // Determine AI chatbot eligibility via feature gate
+    const hasAiChat = await hasFeature(tenant.id, "ai_chat");
 
     return NextResponse.json({
       success: true,

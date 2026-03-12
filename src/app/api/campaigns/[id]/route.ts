@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sanitizePagination } from "@/lib/utils";
+import { hasFeature, featureGatedResponse } from "@/lib/feature-gate";
 
 export async function GET(
   req: NextRequest,
@@ -12,6 +13,10 @@ export async function GET(
     const session = await getServerSession(authOptions);
     if (!session?.user?.tenantId) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!(await hasFeature(session.user.tenantId, "campaigns"))) {
+      return NextResponse.json(featureGatedResponse("Campaigns"), { status: 403 });
     }
 
     const { id } = await params;

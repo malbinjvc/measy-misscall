@@ -173,6 +173,8 @@ export const createPlanSchema = z.object({
   maxStaff: z.number().min(1),
   features: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
+  stripePriceId: z.string().optional().nullable(),
+  monthlyStripePriceId: z.string().optional().nullable(),
 });
 
 export const updateTenantStatusSchema = z.object({
@@ -306,6 +308,7 @@ export const chatMessageSchema = z.object({
 
 export const checkoutSchema = z.object({
   planId: z.string().min(1, "Plan ID is required"),
+  billingInterval: z.enum(["annual", "monthly"]).default("annual"),
 });
 
 export const purchaseNumberSchema = z.object({
@@ -555,6 +558,21 @@ export const createCampaignSchema = z.object({
 });
 
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
+
+// --- Staff ---
+
+export const inviteStaffSchema = z.object({
+  email: z.string().email("Valid email is required"),
+  name: z.string().min(2, "Name is required").max(100),
+});
+
+export const acceptInviteSchema = z.object({
+  token: z.string().min(1, "Invite token is required"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export type InviteStaffInput = z.infer<typeof inviteStaffSchema>;
+export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export type UpdateAppointmentInput = z.infer<typeof updateAppointmentSchema>;
 export type ServiceSubOptionInput = z.infer<typeof serviceSubOptionSchema>;

@@ -30,6 +30,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, data: { url: portalSession.url } });
   } catch (error: unknown) {
     console.error("Portal error:", error);
+
+    // Handle deleted/invalid Stripe customer — clear stale ID so tenant can re-subscribe
+    const stripeErr = error as { type?: string; code?: string };
+    if (stripeErr.type === "StripeInvalidRequestError" && stripeErr.code === "resource_missing") {
+      return NextResponse.json(
+        { success: false, error: "Your billing account was not found. Please contact support or re-subscribe to a plan." },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json({ success: false, error: "Failed to create portal session" }, { status: 500 });
   }
 }

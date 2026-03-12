@@ -1,63 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
-import { Prisma, SmsStatus } from "@prisma/client";
+import prismaRead from "@/lib/prisma-read";
+import { Prisma } from "@prisma/client";
 import { sanitizePagination } from "@/lib/utils";
-import { getTwilioClient } from "@/lib/twilio";
-
-/**
- * Lazy-sync: when SMS logs are viewed, refresh any QUEUED/SENT messages older than
- * 30 seconds by fetching their real status from Twilio. This handles cases where
- * Twilio's statusCallback can't reach the server (e.g. ngrok free tier interstitial).
- * Fire-and-forget — doesn't block the response.
- */
-function lazySyncStaleStatuses(tenantId: string) {
-  const staleThreshold = new Date(Date.now() - 30_000);
-
-  prisma.smsLog
-    .findMany({
-      where: {
-        tenantId,
-        status: { in: ["QUEUED", "SENT"] },
-        twilioMessageSid: { not: null },
-        createdAt: { lt: staleThreshold },
-      },
-      select: { id: true, twilioMessageSid: true },
-      take: 20, // bounded batch
-    })
-    .then(async (stale) => {
-      if (stale.length === 0) return;
-      const client = await getTwilioClient();
-
-      const statusMap: Record<string, SmsStatus> = {
-        queued: "QUEUED",
-        sent: "SENT",
-        delivered: "DELIVERED",
-        failed: "FAILED",
-        undelivered: "UNDELIVERED",
-      };
-
-      await Promise.allSettled(
-        stale.map(async (log) => {
-          const msg = await client.messages(log.twilioMessageSid!).fetch();
-          const newStatus = statusMap[msg.status] || "QUEUED";
-          if (newStatus !== "QUEUED" && newStatus !== "SENT") {
-            await prisma.smsLog.update({
-              where: { id: log.id },
-              data: {
-                status: newStatus,
-                deliveredAt: newStatus === "DELIVERED" ? new Date() : undefined,
-                errorCode: msg.errorCode?.toString() || null,
-                errorMessage: msg.errorMessage || null,
-              },
-            });
-          }
-        })
-      );
-    })
-    .catch((err) => console.error("Lazy SMS status sync error:", err));
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -69,24 +15,44 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams;
     const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
+    const cursor = searchParams.get("cursor"); // cursor-based pagination (ID of last item)
 
     const where: Prisma.SmsLogWhereInput = { tenantId: session.user.tenantId, type: { not: "OTP_VERIFICATION" } };
     if (status) where.status = status as Prisma.EnumSmsStatusFilter;
 
-    const [logs, total] = await Promise.all([
-      prisma.smsLog.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      prisma.smsLog.count({ where }),
+    // Cursor-based pagination avoids slow OFFSET scans on deep pages (page 500+).
+    // If cursor is provided, use keyset pagination and skip count(); otherwise fall back to offset.
+    const useCursor = !!cursor;
+
+    const findArgs: Prisma.SmsLogFindManyArgs = {
+      where,
+      orderBy: { createdAt: "desc" },
+      take: useCursor ? pageSize + 1 : pageSize, // fetch one extra in cursor mode to derive hasMore
+      ...(useCursor
+        ? { cursor: { id: cursor }, skip: 1 }
+        : { skip: (page - 1) * pageSize }),
+    };
+
+    // Use read replica for listing queries (read-heavy)
+    // Skip count() in cursor mode — derive hasMore from extra row instead
+    const [rawLogs, total] = await Promise.all([
+      prismaRead.smsLog.findMany(findArgs),
+      useCursor ? Promise.resolve(-1) : prismaRead.smsLog.count({ where }),
     ]);
 
-    // Fire-and-forget: sync stale QUEUED/SENT statuses from Twilio
-    lazySyncStaleStatuses(session.user.tenantId);
+    const hasMore = useCursor ? rawLogs.length > pageSize : page < Math.ceil(total / pageSize);
+    const logs = useCursor && rawLogs.length > pageSize ? rawLogs.slice(0, pageSize) : rawLogs;
+    const nextCursor = logs.length > 0 && hasMore ? logs[logs.length - 1].id : null;
 
-    return NextResponse.json({ success: true, data: logs, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+    return NextResponse.json({
+      success: true,
+      data: logs,
+      ...(useCursor ? {} : { total, totalPages: Math.ceil(total / pageSize) }),
+      page,
+      pageSize,
+      nextCursor,
+      hasMore,
+    });
   } catch (error) {
     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
   }

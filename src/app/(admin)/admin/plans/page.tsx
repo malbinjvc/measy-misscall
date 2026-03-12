@@ -26,6 +26,7 @@ interface PlanForm {
   features: string[];
   isActive: boolean;
   stripePriceId: string;
+  monthlyStripePriceId: string;
 }
 
 interface Plan extends PlanForm {
@@ -40,7 +41,7 @@ export default function AdminPlansPage() {
   const [form, setForm] = useState({
     name: "", description: "", price: 0, interval: "month",
     maxCalls: 100, maxSms: 100, maxServices: 10, maxStaff: 3,
-    features: [] as string[], isActive: true, stripePriceId: "",
+    features: [] as string[], isActive: true, stripePriceId: "", monthlyStripePriceId: "",
   });
   const [featureInput, setFeatureInput] = useState("");
 
@@ -83,7 +84,7 @@ export default function AdminPlansPage() {
 
   function openCreate() {
     setEditingPlan(null);
-    setForm({ name: "", description: "", price: 0, interval: "month", maxCalls: 100, maxSms: 100, maxServices: 10, maxStaff: 3, features: [], isActive: true, stripePriceId: "" });
+    setForm({ name: "", description: "", price: 0, interval: "month", maxCalls: 100, maxSms: 100, maxServices: 10, maxStaff: 3, features: [], isActive: true, stripePriceId: "", monthlyStripePriceId: "" });
     setIsDialogOpen(true);
   }
 
@@ -93,6 +94,7 @@ export default function AdminPlansPage() {
       name: plan.name, description: plan.description || "", price: plan.price, interval: plan.interval,
       maxCalls: plan.maxCalls, maxSms: plan.maxSms, maxServices: plan.maxServices, maxStaff: plan.maxStaff,
       features: plan.features || [], isActive: plan.isActive, stripePriceId: plan.stripePriceId || "",
+      monthlyStripePriceId: plan.monthlyStripePriceId || "",
     });
     setIsDialogOpen(true);
   }
@@ -141,8 +143,8 @@ export default function AdminPlansPage() {
               {data?.data?.map((plan: Plan) => (
                 <TableRow key={plan.id}>
                   <TableCell className="font-medium">{plan.name}</TableCell>
-                  <TableCell>{formatCurrency(plan.price)}/{plan.interval}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{plan.maxCalls} calls, {plan.maxSms} SMS, {plan.maxServices} services</TableCell>
+                  <TableCell>{formatCurrency(plan.price)}/mo (annual)</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{plan.maxCalls} calls, {plan.maxSms} SMS, {plan.maxStaff} staff</TableCell>
                   <TableCell>{plan._count?.subscriptions || 0}</TableCell>
                   <TableCell><Badge variant={plan.isActive ? "success" : "secondary"}>{plan.isActive ? "Active" : "Inactive"}</Badge></TableCell>
                   <TableCell>
@@ -169,7 +171,8 @@ export default function AdminPlansPage() {
               <div className="space-y-2"><Label>Price ($)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: parseFloat(e.target.value) || 0 })} /></div>
             </div>
             <div className="space-y-2"><Label>Description</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-            <div className="space-y-2"><Label>Stripe Price ID</Label><Input value={form.stripePriceId} onChange={(e) => setForm({ ...form, stripePriceId: e.target.value })} placeholder="price_xxxxxxx" /></div>
+            <div className="space-y-2"><Label>Annual Stripe Price ID</Label><Input value={form.stripePriceId} onChange={(e) => setForm({ ...form, stripePriceId: e.target.value })} placeholder="price_xxxxxxx (annual)" /></div>
+            <div className="space-y-2"><Label>Monthly Stripe Price ID</Label><Input value={form.monthlyStripePriceId} onChange={(e) => setForm({ ...form, monthlyStripePriceId: e.target.value })} placeholder="price_xxxxxxx (monthly, +$30)" /></div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Max Calls</Label><Input type="number" value={form.maxCalls} onChange={(e) => setForm({ ...form, maxCalls: parseInt(e.target.value) || 0 })} /></div>
               <div className="space-y-2"><Label>Max SMS</Label><Input type="number" value={form.maxSms} onChange={(e) => setForm({ ...form, maxSms: parseInt(e.target.value) || 0 })} /></div>

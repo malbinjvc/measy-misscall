@@ -20,6 +20,7 @@ export async function GET() {
           include: { subOptions: { orderBy: { sortOrder: "asc" } } },
         },
       },
+      take: 200, // Bounded: typical tenants have 5-50 services
     });
 
     return NextResponse.json({ success: true, data: services });

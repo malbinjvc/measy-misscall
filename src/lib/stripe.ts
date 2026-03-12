@@ -25,9 +25,8 @@ function getStripeInstance(): Stripe {
     typescript: true,
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForStripe.stripe = instance;
-  }
+  // Cache in ALL environments (including production on Cloud Run)
+  globalForStripe.stripe = instance;
 
   return instance;
 }
@@ -67,6 +66,9 @@ export async function createCheckoutSession({
     subscription_data: {
       metadata: { tenantId },
     },
+    // Tax: HST 13% (Ontario, Canada) — requires Stripe Tax enabled in dashboard
+    automatic_tax: { enabled: true },
+    customer_update: { address: "auto" },
   });
   return session;
 }
@@ -86,6 +88,18 @@ export async function getSubscription(subscriptionId: string) {
 export async function cancelSubscription(subscriptionId: string) {
   return stripe.subscriptions.update(subscriptionId, {
     cancel_at_period_end: true,
+  });
+}
+
+export async function changeSubscriptionPlan(subscriptionId: string, newPriceId: string) {
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const itemId = subscription.items.data[0]?.id;
+  if (!itemId) throw new Error("No subscription item found");
+
+  return stripe.subscriptions.update(subscriptionId, {
+    items: [{ id: itemId, price: newPriceId }],
+    proration_behavior: "create_prorations",
+    cancel_at_period_end: false,
   });
 }
 
@@ -120,8 +134,16 @@ export async function upsertSubscriptionFromStripe(
   const subscription = await stripe.subscriptions.retrieve(subscriptionId);
   const priceId = subscription.items?.data?.[0]?.price?.id;
 
+  // Match plan by annual OR monthly Stripe price ID
   const plan = priceId
-    ? await prisma.plan.findFirst({ where: { stripePriceId: priceId } })
+    ? await prisma.plan.findFirst({
+        where: {
+          OR: [
+            { stripePriceId: priceId },
+            { monthlyStripePriceId: priceId },
+          ],
+        },
+      })
     : null;
 
   if (!plan) return false;

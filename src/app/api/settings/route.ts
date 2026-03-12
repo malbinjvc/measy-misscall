@@ -7,6 +7,7 @@ import { normalizePhoneNumber } from "@/lib/utils";
 import { generateIvrAudio } from "@/lib/elevenlabs";
 import { businessProfileSchema, businessHoursSchema, websiteConfigSchema } from "@/lib/validations";
 import { migrateConfig } from "@/components/website-builder/migrate";
+import { hasFeature, featureGatedResponse } from "@/lib/feature-gate";
 import { ZodError } from "zod";
 
 interface BusinessHoursInput {
@@ -104,15 +105,18 @@ export async function PATCH(req: NextRequest) {
         // Validate hours with Zod
         const hoursData = businessHoursSchema.parse(data);
 
-        for (const h of hoursData.hours) {
-          await prisma.businessHours.upsert({
-            where: { tenantId_day: { tenantId, day: h.day } },
-            update: { isOpen: h.isOpen, openTime: h.openTime, closeTime: h.closeTime },
-            create: { tenantId, day: h.day, isOpen: h.isOpen, openTime: h.openTime, closeTime: h.closeTime },
-          });
-        }
+        // Batch all upserts in a single transaction instead of N+1 sequential queries
+        await prisma.$transaction(
+          hoursData.hours.map((h: BusinessHoursInput) =>
+            prisma.businessHours.upsert({
+              where: { tenantId_day: { tenantId, day: h.day } },
+              update: { isOpen: h.isOpen, openTime: h.openTime, closeTime: h.closeTime },
+              create: { tenantId, day: h.day, isOpen: h.isOpen, openTime: h.openTime, closeTime: h.closeTime },
+            })
+          )
+        );
 
-        // Count future appointments that conflict with new hours
+        // Count future appointments that conflict with new hours (bounded query)
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const futureAppointments = await prisma.appointment.findMany({
@@ -122,6 +126,7 @@ export async function PATCH(req: NextRequest) {
             status: { notIn: ["CANCELLED", "NO_SHOW"] },
           },
           select: { date: true, startTime: true, endTime: true },
+          take: 10000,
         });
 
         const DAY_NAMES_UPPER = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
@@ -216,6 +221,10 @@ export async function PATCH(req: NextRequest) {
       }
 
       case "domain": {
+        if (!(await hasFeature(tenantId, "custom_domain"))) {
+          return NextResponse.json(featureGatedResponse("Custom domain"), { status: 403 });
+        }
+
         const domain = typeof data.customDomain === "string" ? data.customDomain.toLowerCase().trim() : null;
 
         if (domain) {

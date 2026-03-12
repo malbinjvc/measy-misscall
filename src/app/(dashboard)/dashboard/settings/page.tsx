@@ -12,12 +12,17 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw, CheckCircle2, Globe, ExternalLink, Copy, XCircle } from "lucide-react";
+import { Loader2, Save, Phone, Image, Upload, X, AlertTriangle, MessageSquare, Volume2, RefreshCw, CheckCircle2, Globe, ExternalLink, Copy, XCircle, Lock } from "lucide-react";
+import { usePlanFeatures } from "@/hooks/use-plan-features";
 
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
   const queryClient = useQueryClient();
+  const { hasFeature } = usePlanFeatures();
+
+  const hasPhone = hasFeature("missed_call_ivr");
+  const hasDomain = hasFeature("custom_domain");
 
   const { data: tenant, isLoading } = useQuery({
     queryKey: ["tenant"],
@@ -61,22 +66,26 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="hours">Business Hours</TabsTrigger>
-          <TabsTrigger value="twilio">Phone</TabsTrigger>
-          <TabsTrigger value="domain">Domain</TabsTrigger>
+          {hasPhone && <TabsTrigger value="twilio">Phone</TabsTrigger>}
+          {hasDomain && <TabsTrigger value="domain">Domain</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="profile">
-          <ProfileSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
+          <ProfileSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} hasAutoConfirm={hasFeature("auto_confirm")} />
         </TabsContent>
         <TabsContent value="hours">
           <BusinessHoursSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
         </TabsContent>
-        <TabsContent value="twilio">
-          <PhoneSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
-        </TabsContent>
-        <TabsContent value="domain">
-          <DomainSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
-        </TabsContent>
+        {hasPhone && (
+          <TabsContent value="twilio">
+            <PhoneSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
+          </TabsContent>
+        )}
+        {hasDomain && (
+          <TabsContent value="domain">
+            <DomainSettings tenant={tenant} mutation={updateMutation} saveSuccess={saveSuccess} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -91,7 +100,7 @@ function generateSlug(name: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-function ProfileSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean }) {
+function ProfileSettings({ tenant, mutation, saveSuccess, hasAutoConfirm }: { tenant: TenantData; mutation: SettingsMutation; saveSuccess: boolean; hasAutoConfirm: boolean }) {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [form, setForm] = useState({
     name: tenant?.name || "",
@@ -167,18 +176,38 @@ function ProfileSettings({ tenant, mutation, saveSuccess }: { tenant: TenantData
           <Label>Description</Label>
           <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </div>
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div className="space-y-0.5">
-            <Label>Auto-confirm appointments</Label>
-            <p className="text-sm text-muted-foreground">
-              Automatically confirm new appointments instead of leaving them as pending.
-            </p>
+        {hasAutoConfirm ? (
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label>Auto-confirm appointments</Label>
+              <p className="text-sm text-muted-foreground">
+                Automatically confirm new appointments instead of leaving them as pending.
+              </p>
+            </div>
+            <Switch
+              checked={form.autoConfirmAppointments}
+              onCheckedChange={(checked) => setForm({ ...form, autoConfirmAppointments: checked })}
+            />
           </div>
-          <Switch
-            checked={form.autoConfirmAppointments}
-            onCheckedChange={(checked) => setForm({ ...form, autoConfirmAppointments: checked })}
-          />
-        </div>
+        ) : (
+          <div className="group relative flex items-center justify-between rounded-lg border p-4 opacity-60 hover:opacity-100 transition-opacity cursor-pointer">
+            <div className="space-y-0.5">
+              <Label className="flex items-center gap-1.5">
+                <Lock className="h-3.5 w-3.5" /> Auto-confirm appointments
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                Upgrade to Professional or higher to auto-confirm appointments.
+              </p>
+            </div>
+            <a
+              href="/dashboard/billing"
+              className="hidden group-hover:inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium text-white transition-colors"
+              style={{ backgroundColor: "#6040E0" }}
+            >
+              Upgrade
+            </a>
+          </div>
+        )}
         <div className="flex items-center justify-between rounded-lg border p-4">
           <div className="space-y-0.5">
             <Label>Concurrent booking capacity</Label>

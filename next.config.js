@@ -2,12 +2,17 @@
 const isDev = process.env.NODE_ENV !== 'production';
 
 const nextConfig = {
+  output: 'standalone',
   poweredBy: false,
   images: {
     remotePatterns: [
       {
         protocol: 'https',
         hostname: '*.amazonaws.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
       },
       {
         protocol: 'http',

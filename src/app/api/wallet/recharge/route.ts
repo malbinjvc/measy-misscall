@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 import { addFunds, getOrCreateWallet } from "@/lib/wallet";
+import { calculateTotalWithFees } from "@/lib/tax";
 
 // POST - manual recharge
 export async function POST(req: NextRequest) {
@@ -50,15 +51,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Calculate tax + Stripe processing fee
+    const { subtotal, tax, stripeFee, total } = calculateTotalWithFees(amount);
+
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100),
+      amount: Math.round(total * 100),
       currency: "cad",
       customer: tenant.stripeCustomerId,
       payment_method: paymentMethods.data[0].id,
       off_session: true,
       confirm: true,
-      description: `Measy Wallet Manual Recharge - $${amount.toFixed(2)} CAD`,
-      metadata: { tenantId, type: "wallet_manual_recharge" },
+      description: `Measy Wallet Recharge - $${subtotal.toFixed(2)} + HST $${tax.toFixed(2)} + fee $${stripeFee.toFixed(2)} = $${total.toFixed(2)} CAD`,
+      metadata: {
+        tenantId,
+        type: "wallet_manual_recharge",
+        subtotal: subtotal.toFixed(2),
+        tax: tax.toFixed(2),
+        stripeFee: stripeFee.toFixed(2),
+      },
     });
 
     if (paymentIntent.status !== "succeeded") {
@@ -68,17 +78,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Only add the subtotal (credit amount) to the wallet — tax + fee are platform revenue
     const wallet = await addFunds(
       tenantId,
-      amount,
+      subtotal,
       "MANUAL_RECHARGE",
-      `Manual recharge $${amount.toFixed(2)} CAD`,
+      `Manual recharge $${subtotal.toFixed(2)} CAD (charged $${total.toFixed(2)} incl. HST + processing fee)`,
       paymentIntent.id
     );
 
     return NextResponse.json({
       success: true,
-      data: { balance: Number(wallet.balance) },
+      data: { balance: Number(wallet.balance), charged: total, tax, stripeFee },
     });
   } catch (error) {
     console.error("Wallet recharge error:", error);

@@ -51,7 +51,7 @@ export const authOptions: NextAuthOptions = {
     maxAge: 7 * 24 * 60 * 60, // 7 days
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id;
         token.role = user.role;
@@ -63,7 +63,7 @@ export const authOptions: NextAuthOptions = {
       const STATUS_REFRESH_TTL_MS = 5 * 60 * 1000; // 5 minutes
       const now = Date.now();
       const lastChecked = (token.statusCheckedAt as number) || 0;
-      const needsRefresh = now - lastChecked > STATUS_REFRESH_TTL_MS;
+      const needsRefresh = trigger === "update" || now - lastChecked > STATUS_REFRESH_TTL_MS;
 
       // SUPER_ADMIN impersonation check — always runs (1 lightweight PK query).
       // Impersonation changes must take effect immediately, not after TTL expires.

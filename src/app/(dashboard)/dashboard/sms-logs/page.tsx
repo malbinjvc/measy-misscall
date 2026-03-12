@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -27,12 +27,22 @@ interface SmsLog {
 export default function SmsLogsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
+  // Cursor stack: tracks cursor IDs for each page visited (enables backward navigation)
+  const cursorStackRef = useRef<string[]>([]);
+  const [currentCursor, setCurrentCursor] = useState<string | null>(null);
+
+  const resetPagination = useCallback(() => {
+    setPage(1);
+    setCurrentCursor(null);
+    cursorStackRef.current = [];
+  }, []);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sms-logs", page, statusFilter],
+    queryKey: ["sms-logs", page, statusFilter, currentCursor],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
+      if (currentCursor) params.set("cursor", currentCursor);
       const res = await fetch(`/api/sms?${params}`);
       if (!res.ok) throw new Error("Request failed");
       return res.json();
@@ -40,11 +50,28 @@ export default function SmsLogsPage() {
     staleTime: 60000,
   });
 
+  const goNext = useCallback(() => {
+    if (!data?.nextCursor) return;
+    cursorStackRef.current.push(data.nextCursor);
+    setCurrentCursor(data.nextCursor);
+    setPage((p) => p + 1);
+  }, [data?.nextCursor]);
+
+  const goPrev = useCallback(() => {
+    if (page <= 1) return;
+    cursorStackRef.current.pop();
+    const prevCursor = cursorStackRef.current.length > 0
+      ? cursorStackRef.current[cursorStackRef.current.length - 1]
+      : null;
+    setCurrentCursor(prevCursor);
+    setPage((p) => p - 1);
+  }, [page]);
+
   return (
     <div>
       <PageHeader title="SMS Logs" description="Track all SMS messages sent to customers" />
       <div className="flex flex-wrap gap-3 mb-4">
-        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); resetPagination(); }}>
           <option value="">All Statuses</option>
           <option value="QUEUED">Queued</option>
           <option value="SENT">Sent</option>
@@ -84,12 +111,14 @@ export default function SmsLogsPage() {
               </TableBody>
             </Table>
           </div>
-          {data.totalPages > 1 && (
+          {(data.hasMore || page > 1) && (
             <div className="flex items-center justify-between mt-4">
-              <p className="text-sm text-muted-foreground">Page {data.page} of {data.totalPages}</p>
+              <p className="text-sm text-muted-foreground">
+                Page {page}{data.total ? ` of ${data.totalPages} (${data.total} total)` : ""}
+              </p>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page <= 1}><ChevronLeft className="h-4 w-4" /></Button>
-                <Button variant="outline" size="sm" onClick={() => setPage(page + 1)} disabled={page >= data.totalPages}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="outline" size="sm" onClick={goPrev} disabled={page <= 1}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="outline" size="sm" onClick={goNext} disabled={!data.hasMore}><ChevronRight className="h-4 w-4" /></Button>
               </div>
             </div>
           )}

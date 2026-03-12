@@ -192,6 +192,7 @@ export interface PlanData {
   features: string[];
   isActive: boolean;
   sortOrder: number;
+  monthlyStripePriceId?: string | null;
 }
 
 // ─── Website Builder Types ──────────────────────────────

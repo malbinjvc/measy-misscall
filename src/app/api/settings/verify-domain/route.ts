@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { hasFeature, featureGatedResponse } from "@/lib/feature-gate";
 import dns from "dns/promises";
 
 export async function POST() {
@@ -9,6 +10,10 @@ export async function POST() {
     const session = await getServerSession(authOptions);
     if (!session?.user?.tenantId) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!(await hasFeature(session.user.tenantId, "custom_domain"))) {
+      return NextResponse.json(featureGatedResponse("Custom domain"), { status: 403 });
     }
 
     const tenant = await prisma.tenant.findUnique({

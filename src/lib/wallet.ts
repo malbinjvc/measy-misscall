@@ -1,8 +1,9 @@
 import prisma from "./prisma";
 import { stripe } from "./stripe";
+import { calculateTotalWithFees } from "./tax";
 
 const RATE_PER_UNIT = 0.035; // $0.035 CAD per SMS or per call minute
-const INITIAL_LOAD_AMOUNT = 15; // $15 CAD on onboarding
+// Monthly premium and tax are handled in src/lib/tax.ts
 
 /**
  * Get or create a wallet for a tenant.
@@ -230,6 +231,7 @@ export async function checkAndAutoRecharge(tenantId: string): Promise<boolean> {
 
 /**
  * Charge via Stripe and add funds to wallet.
+ * Charges subtotal + HST + Stripe fee; only credits the subtotal to the wallet.
  */
 async function chargeAndAddFunds(
   tenantId: string,
@@ -237,23 +239,31 @@ async function chargeAndAddFunds(
   paymentMethodId: string,
   amount: number
 ): Promise<boolean> {
+  const { subtotal, tax, stripeFee, total } = calculateTotalWithFees(amount);
+
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(amount * 100),
+    amount: Math.round(total * 100),
     currency: "cad",
     customer: customerId,
     payment_method: paymentMethodId,
     off_session: true,
     confirm: true,
-    description: `Measy Wallet Auto-Recharge - $${amount.toFixed(2)} CAD`,
-    metadata: { tenantId, type: "wallet_recharge" },
+    description: `Measy Wallet Auto-Recharge - $${subtotal.toFixed(2)} + HST $${tax.toFixed(2)} + fee $${stripeFee.toFixed(2)} = $${total.toFixed(2)} CAD`,
+    metadata: {
+      tenantId,
+      type: "wallet_recharge",
+      subtotal: subtotal.toFixed(2),
+      tax: tax.toFixed(2),
+      stripeFee: stripeFee.toFixed(2),
+    },
   });
 
   if (paymentIntent.status === "succeeded") {
     await addFunds(
       tenantId,
-      amount,
+      subtotal,
       "RECHARGE",
-      `Auto-recharge $${amount.toFixed(2)} CAD`,
+      `Auto-recharge $${subtotal.toFixed(2)} CAD (charged $${total.toFixed(2)} incl. HST + fee)`,
       paymentIntent.id
     );
     return true;
@@ -263,63 +273,4 @@ async function chargeAndAddFunds(
   return false;
 }
 
-/**
- * Load initial wallet funds during onboarding.
- */
-export async function loadInitialFunds(
-  tenantId: string,
-  customerId: string,
-  paymentMethodId?: string
-): Promise<boolean> {
-  if (paymentMethodId) {
-    try {
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(INITIAL_LOAD_AMOUNT * 100),
-        currency: "cad",
-        customer: customerId,
-        payment_method: paymentMethodId,
-        off_session: true,
-        confirm: true,
-        description: `Measy Wallet Initial Load - $${INITIAL_LOAD_AMOUNT.toFixed(2)} CAD`,
-        metadata: { tenantId, type: "wallet_initial_load" },
-      });
-
-      if (paymentIntent.status === "succeeded") {
-        await addFunds(
-          tenantId,
-          INITIAL_LOAD_AMOUNT,
-          "INITIAL_LOAD",
-          `Initial wallet load $${INITIAL_LOAD_AMOUNT.toFixed(2)} CAD`,
-          paymentIntent.id
-        );
-        return true;
-      }
-    } catch (error) {
-      console.error("Initial wallet load charge failed:", error);
-    }
-  }
-
-  try {
-    const paymentMethods = await stripe.paymentMethods.list({
-      customer: customerId,
-      type: "card",
-      limit: 1,
-    });
-
-    if (paymentMethods.data.length > 0) {
-      return await chargeAndAddFunds(
-        tenantId,
-        customerId,
-        paymentMethods.data[0].id,
-        INITIAL_LOAD_AMOUNT
-      );
-    }
-  } catch (error) {
-    console.error("Initial wallet load fallback failed:", error);
-  }
-
-  await getOrCreateWallet(tenantId);
-  return false;
-}
-
-export { RATE_PER_UNIT, INITIAL_LOAD_AMOUNT };
+export { RATE_PER_UNIT };

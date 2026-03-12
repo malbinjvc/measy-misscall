@@ -47,7 +47,9 @@ export default function AdminTenantsPage() {
       if (statusFilter) params.set("status", statusFilter);
       const res = await fetch(`/api/admin/tenants?${params}`);
       if (!res.ok) throw new Error("Request failed");
-      return res.json();
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Request failed");
+      return json;
     },
     staleTime: 60000,
   });

@@ -253,7 +253,7 @@ export async function PUT(
       let totalDuration: number;
       if (appointment.items && appointment.items.length > 0) {
         totalDuration = appointment.items.reduce((sum, item) => {
-          const dur = item.serviceOption?.duration ?? item.service.duration;
+          const dur = item.serviceOption?.duration ?? item.service?.duration ?? 60;
           return sum + dur * item.quantity;
         }, 0);
       } else {

@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -145,6 +146,20 @@ model User {
   @@index([email])
 }
 
+model StaffInvite {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email     String
+  name      String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, email])
+  @@index([token])
+}
+
 model Tenant {
   id                  String         @id @default(cuid())
   name                String
@@ -206,6 +221,7 @@ model Tenant {
   supportTickets      SupportTicket[]
   wallet              Wallet?
   campaigns           Campaign[]
+  staffInvites        StaffInvite[]
 
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -292,6 +308,7 @@ model Call {
   @@index([tenantId, createdAt])
   @@index([tenantId, status])
   @@index([tenantId, ivrResponse, callbackHandled])
+  @@index([tenantId, callerNumber])  // customer activity: calls by phone within tenant
   @@index([callerNumber])
   @@index([createdAt])
   @@index([status])
@@ -302,9 +319,9 @@ model Appointment {
   tenantId        String
   tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   serviceId       String?
-  service         Service?          @relation(fields: [serviceId], references: [id])
+  service         Service?          @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   serviceOptionId    String?
-  serviceOption      ServiceOption?    @relation(fields: [serviceOptionId], references: [id])
+  serviceOption      ServiceOption?    @relation(fields: [serviceOptionId], references: [id], onDelete: SetNull)
   quantity           Int               @default(1)
   selectedSubOptions String[]          // Array of ServiceSubOption IDs
   items              AppointmentItem[]
@@ -341,10 +358,10 @@ model AppointmentItem {
   id                 String         @id @default(cuid())
   appointmentId      String
   appointment        Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  serviceId          String
-  service            Service        @relation(fields: [serviceId], references: [id])
+  serviceId          String?
+  service            Service?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   serviceOptionId    String?
-  serviceOption      ServiceOption? @relation(fields: [serviceOptionId], references: [id])
+  serviceOption      ServiceOption? @relation(fields: [serviceOptionId], references: [id], onDelete: SetNull)
   quantity           Int            @default(1)
   selectedSubOptions String[]
   sortOrder          Int            @default(0)
@@ -359,7 +376,7 @@ model SmsLog {
   tenantId        String
   tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   callId          String?
-  call            Call?     @relation(fields: [callId], references: [id])
+  call            Call?     @relation(fields: [callId], references: [id], onDelete: SetNull)
   twilioMessageSid String?  @unique
   toNumber        String
   fromNumber      String
@@ -376,6 +393,8 @@ model SmsLog {
   // tenantId is leading column in compound indexes — no standalone @@index([tenantId]) needed
   @@index([tenantId, createdAt])
   @@index([tenantId, status])
+  @@index([tenantId, status, createdAt]) // lazy-sync query: tenantId + QUEUED/SENT status + createdAt filter
+  @@index([tenantId, toNumber])          // customer activity: SMS by phone within tenant
   @@index([callId])
   @@index([status])
 }
@@ -401,8 +420,9 @@ model Plan {
   description       String?
   price             Decimal     @default(0) @db.Decimal(10, 2)
   interval          String         @default("month") // "month" or "year"
-  stripePriceId     String?        @unique
-  maxCalls          Int            @default(100)
+  stripePriceId          String?   @unique  // Annual billing Stripe price
+  monthlyStripePriceId   String?   @unique  // Monthly billing Stripe price (+$30 premium)
+  maxCalls               Int       @default(100)
   maxSms            Int            @default(100)
   maxServices       Int            @default(10)
   maxStaff          Int            @default(3)

@@ -503,6 +503,8 @@ function SubscriptionStep({
   });
 
   const [selectedPlan, setSelectedPlan] = useState<string>("");
+  const [billingInterval, setBillingInterval] = useState<"annual" | "monthly">("annual");
+  const MONTHLY_PREMIUM = 30;
 
   if (isLoading) return <LoadingPage />;
 
@@ -510,38 +512,72 @@ function SubscriptionStep({
     <Card>
       <CardHeader>
         <CardTitle>Choose Your Plan</CardTitle>
-        <CardDescription>Select the plan that fits your business needs</CardDescription>
+        <CardDescription>Select the plan that fits your business needs. All prices in CAD + 13% HST.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Billing interval toggle */}
+        <div className="flex items-center justify-center gap-2 rounded-lg border p-1 bg-muted/50 w-fit mx-auto">
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
+              billingInterval === "annual"
+                ? "bg-white shadow text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setBillingInterval("annual")}
+          >
+            Annual (Save ${MONTHLY_PREMIUM}/mo)
+          </button>
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
+              billingInterval === "monthly"
+                ? "bg-white shadow text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setBillingInterval("monthly")}
+          >
+            Monthly
+          </button>
+        </div>
+
         <div className="grid sm:grid-cols-3 gap-4">
-          {plans?.map((plan) => (
-            <div
-              key={plan.id}
-              className={`rounded-lg border-2 p-4 cursor-pointer transition ${
-                selectedPlan === plan.id
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50"
-              }`}
-              onClick={() => setSelectedPlan(plan.id)}
-            >
-              <h3 className="font-semibold">{plan.name}</h3>
-              <p className="text-2xl font-bold mt-1">
-                ${plan.price}
-                <span className="text-sm font-normal text-muted-foreground">/mo</span>
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">{plan.description}</p>
-              <ul className="mt-3 space-y-1">
-                {plan.features?.map((f) => (
-                  <li key={f} className="text-xs flex items-center gap-1">
-                    <Check className="h-3 w-3 text-green-600" /> {f}
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs text-muted-foreground mt-2">
-                {plan.maxCalls} calls | {plan.maxSms} SMS | {plan.maxServices} services
-              </p>
-            </div>
-          ))}
+          {plans?.map((plan) => {
+            const displayPrice = billingInterval === "monthly"
+              ? (plan.price + MONTHLY_PREMIUM).toFixed(2)
+              : plan.price;
+            return (
+              <div
+                key={plan.id}
+                className={`rounded-lg border-2 p-4 cursor-pointer transition ${
+                  selectedPlan === plan.id
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/50"
+                }`}
+                onClick={() => setSelectedPlan(plan.id)}
+              >
+                <h3 className="font-semibold">{plan.name}</h3>
+                <p className="text-2xl font-bold mt-1">
+                  ${displayPrice}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    /mo{billingInterval === "annual" ? " (billed annually)" : ""}
+                  </span>
+                </p>
+                {billingInterval === "monthly" && (
+                  <p className="text-xs text-muted-foreground line-through">${plan.price}/mo with annual</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">{plan.description}</p>
+                <ul className="mt-3 space-y-1">
+                  {plan.features?.map((f) => (
+                    <li key={f} className="text-xs flex items-center gap-1">
+                      <Check className="h-3 w-3 text-green-600" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {plan.maxCalls} calls | {plan.maxSms} SMS | {plan.maxStaff} staff
+                </p>
+              </div>
+            );
+          })}
         </div>
         <div className="flex gap-3">
           <Button
@@ -558,7 +594,7 @@ function SubscriptionStep({
           </Button>
           <Button
             className="flex-1"
-            onClick={() => mutation.mutate({ step: "SUBSCRIPTION", data: { planId: selectedPlan } })}
+            onClick={() => mutation.mutate({ step: "SUBSCRIPTION", data: { planId: selectedPlan, billingInterval } })}
             disabled={mutation.isPending || !selectedPlan}
           >
             {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

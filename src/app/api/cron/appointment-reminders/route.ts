@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { sendSmsWithConsent, buildReminderSmsBody } from "@/lib/sms";
 import { formatDateUTC } from "@/lib/utils";
+import { getTenantFeatures } from "@/lib/feature-gate";
 
 const APP_TIMEZONE = "America/Toronto";
 
@@ -72,11 +73,23 @@ export async function GET(req: NextRequest) {
         select: { name: true, slug: true, assignedTwilioNumber: true },
       },
     },
+    take: 5000, // Bounded: prevent unbounded fetch at scale
   });
 
-  // Filter candidates that fall within the reminder window
+  // Pre-fetch features for all unique tenants (one query per tenant, cached in-memory)
+  const uniqueTenantIds = Array.from(new Set(candidates.map((a) => a.tenantId)));
+  const tenantFeaturesMap = new Map<string, string[]>();
+  await Promise.all(
+    uniqueTenantIds.map(async (tid) => {
+      tenantFeaturesMap.set(tid, await getTenantFeatures(tid));
+    })
+  );
+
+  // Filter candidates that fall within the reminder window AND have the appointment_sms feature
   const eligible = candidates.filter((apt) => {
     if (!apt.tenant.assignedTwilioNumber) return false;
+    const features = tenantFeaturesMap.get(apt.tenantId) ?? [];
+    if (!features.includes("appointment_sms")) return false;
     const aptMs = appointmentToUtcTimestamp(apt.date, apt.startTime).getTime();
     return aptMs >= windowStartMs && aptMs <= windowEndMs;
   });

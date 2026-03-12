@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { uploadFile } from "@/lib/storage";
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm"];
@@ -74,13 +74,8 @@ export async function POST(req: NextRequest) {
     const prefix = session.user.tenantId || "platform";
     const filename = `${prefix}-${Date.now()}${ext}`;
 
-    // Ensure uploads directory exists
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    await mkdir(uploadsDir, { recursive: true });
-
-    // Write file to disk (reuse buffer from magic byte validation)
-    const filePath = path.join(uploadsDir, filename);
-    await writeFile(filePath, buffer);
+    // Upload to GCS (production) or local filesystem (dev)
+    const result = await uploadFile(buffer, filename, "uploads", file.type);
 
     // Determine media type
     const mediaType = ALLOWED_VIDEO_TYPES.includes(file.type) ? "video" : ALLOWED_DOC_TYPES.includes(file.type) ? "document" : "image";
@@ -88,9 +83,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        url: `/uploads/${filename}`,
+        url: result.url,
         mediaType,
-        filename,
+        filename: result.filename,
       },
     });
   } catch (error) {

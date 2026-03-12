@@ -6,13 +6,14 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Menu, Phone, X } from "lucide-react";
+import { Menu, Phone, X, Lock } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
 import {
   LayoutDashboard,
   PhoneCall,
   Calendar,
+  UserPlus,
   Wrench,
   Mail,
   Settings,
@@ -24,14 +25,23 @@ import {
   LogOut,
 } from "lucide-react";
 import { useUnreadCount } from "@/hooks/use-unread-count";
+import { usePlanFeatures } from "@/hooks/use-plan-features";
 
-const mobileLinks = [
+interface MobileLink {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  requiredFeature?: string;
+}
+
+const mobileLinks: MobileLink[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/dashboard/calls", label: "Calls", icon: PhoneCall },
+  { href: "/dashboard/calls", label: "Calls", icon: PhoneCall, requiredFeature: "missed_call_ivr" },
   { href: "/dashboard/appointments", label: "Appointments", icon: Calendar },
   { href: "/dashboard/services", label: "Services", icon: Wrench },
   { href: "/dashboard/sms-logs", label: "SMS Logs", icon: Mail },
-  { href: "/dashboard/campaigns", label: "Campaigns", icon: Megaphone },
+  { href: "/dashboard/campaigns", label: "Campaigns", icon: Megaphone, requiredFeature: "campaigns" },
+  { href: "/dashboard/staff", label: "Team", icon: UserPlus },
   { href: "/dashboard/wallet", label: "Wallet", icon: Wallet },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/website", label: "Website", icon: Globe },
@@ -47,6 +57,7 @@ const PREFETCH_ROUTES: Record<string, { queryKey: unknown[]; url: string }> = {
   "/dashboard/sms-logs": { queryKey: ["sms-logs", 1, ""], url: "/api/sms?page=1&pageSize=20" },
   "/dashboard/services": { queryKey: ["services"], url: "/api/services" },
   "/dashboard/campaigns": { queryKey: ["campaigns", 1], url: "/api/campaigns?page=1&pageSize=20" },
+  "/dashboard/staff": { queryKey: ["staff"], url: "/api/staff" },
   "/dashboard/billing": { queryKey: ["tenant"], url: "/api/tenant" },
   "/dashboard/website": { queryKey: ["tenant"], url: "/api/tenant" },
   "/dashboard/settings": { queryKey: ["tenant"], url: "/api/tenant" },
@@ -74,6 +85,7 @@ export function Header() {
   };
 
   const { data: unreadCount } = useUnreadCount();
+  const { hasFeature } = usePlanFeatures();
 
   return (
     <>
@@ -132,6 +144,25 @@ export function Header() {
                   pathname === link.href ||
                   (link.href !== "/dashboard" && pathname.startsWith(link.href));
                 const badge = link.href === "/dashboard/support" ? (unreadCount || 0) : 0;
+                const isLocked = link.requiredFeature ? !hasFeature(link.requiredFeature) : false;
+
+                if (isLocked) {
+                  return (
+                    <Link
+                      key={link.href}
+                      href="/dashboard/billing"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground/50 transition-colors"
+                    >
+                      <link.icon className="h-4 w-4" />
+                      <span className="group-hover:hidden">{link.label}</span>
+                      <span className="hidden group-hover:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-white" style={{ backgroundColor: "#6040E0" }}>
+                        Upgrade
+                      </span>
+                      <Lock className="ml-auto h-3 w-3 group-hover:hidden" />
+                    </Link>
+                  );
+                }
 
                 return (
                   <Link

@@ -1,0 +1,54 @@
+[
+  {
+    "name": "twilio-cleanup",
+    "description": "Retry failed Twilio number releases",
+    "schedule": "*/30 * * * *",
+    "timeZone": "America/Toronto",
+    "httpTarget": {
+      "uri": "${CLOUD_RUN_URL}/api/cron/twilio-cleanup",
+      "httpMethod": "GET",
+      "headers": {
+        "Authorization": "Bearer ${CRON_SECRET}"
+      }
+    }
+  },
+  {
+    "name": "appointment-reminders",
+    "description": "Send SMS reminders 12hrs before confirmed appointments",
+    "schedule": "*/30 * * * *",
+    "timeZone": "America/Toronto",
+    "httpTarget": {
+      "uri": "${CLOUD_RUN_URL}/api/cron/appointment-reminders",
+      "httpMethod": "GET",
+      "headers": {
+        "Authorization": "Bearer ${CRON_SECRET}"
+      }
+    }
+  },
+  {
+    "name": "cleanup-verifications",
+    "description": "Delete expired phone verification records",
+    "schedule": "0 3 * * *",
+    "timeZone": "America/Toronto",
+    "httpTarget": {
+      "uri": "${CLOUD_RUN_URL}/api/cron/cleanup-verifications",
+      "httpMethod": "GET",
+      "headers": {
+        "Authorization": "Bearer ${CRON_SECRET}"
+      }
+    }
+  },
+  {
+    "name": "cleanup-logs",
+    "description": "Clean up old admin logs",
+    "schedule": "0 4 * * *",
+    "timeZone": "America/Toronto",
+    "httpTarget": {
+      "uri": "${CLOUD_RUN_URL}/api/cron/cleanup-logs",
+      "httpMethod": "GET",
+      "headers": {
+        "Authorization": "Bearer ${CRON_SECRET}"
+      }
+    }
+  }
+]

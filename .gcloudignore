@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Dependencies (rebuilt in Docker)
+node_modules
+
+# Build output (rebuilt in Docker)
+.next
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production.template
+
+# Development
+*.md
+security-agents
+vitest.config.ts
+src/lib/__tests__
+.claude
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db

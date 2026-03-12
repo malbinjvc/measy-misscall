@@ -9,6 +9,7 @@ import { hashOtp } from "@/lib/crypto";
 import { getCustomerFromRequest, signCustomerToken, setCustomerCookie } from "@/lib/customer-auth";
 import { sendSmsWithConsent, buildConfirmationSmsBody, buildReminderSmsBody } from "@/lib/sms";
 import { formatDateUTC } from "@/lib/utils";
+import { getTenantFeatures } from "@/lib/feature-gate";
 
 export async function POST(
   req: NextRequest,
@@ -26,6 +27,11 @@ export async function POST(
     if (!tenant || tenant.status !== "ACTIVE") {
       return NextResponse.json({ success: false, error: "Business not found" }, { status: 404 });
     }
+
+    // Fetch plan features once for gating checks below
+    const tenantFeatures = await getTenantFeatures(tenant.id);
+    const canAutoConfirm = tenantFeatures.includes("auto_confirm");
+    const canSendApptSms = tenantFeatures.includes("appointment_sms");
 
     const body = await req.json();
     const validated = createAppointmentSchema.parse(body);
@@ -197,6 +203,9 @@ export async function POST(
     const endOfDay = new Date(validated.date + "T23:59:59.999Z");
 
     const { appointment, customer } = await prisma.$transaction(async (tx) => {
+      // Advisory lock on tenant+date prevents phantom reads from concurrent bookings
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${tenant.id + ':' + validated.date}))`;
+
       // Count overlapping non-cancelled appointments for concurrent capacity check
       const overlappingCount = await tx.appointment.count({
         where: {
@@ -295,15 +304,15 @@ export async function POST(
           vehicleModel: validated.vehicleModel || null,
           appointmentPreference: validated.appointmentPreference || null,
           smsConsent: body.smsConsent === true,
-          status: tenant.autoConfirmAppointments ? "CONFIRMED" : "PENDING",
+          status: (tenant.autoConfirmAppointments && canAutoConfirm) ? "CONFIRMED" : "PENDING",
         },
       });
 
       return { appointment: appt, customer };
     });
 
-    // Fire-and-forget: send confirmation SMS when auto-confirm is enabled
-    if (tenant.autoConfirmAppointments && tenant.assignedTwilioNumber) {
+    // Fire-and-forget: send confirmation SMS when auto-confirm is enabled (requires appointment_sms feature)
+    if (canSendApptSms && tenant.autoConfirmAppointments && canAutoConfirm && tenant.assignedTwilioNumber) {
       const dateStr = formatDateUTC(appointment.date);
       const smsBody = buildConfirmationSmsBody(tenant.name, tenant.slug, dateStr, appointment.startTime);
       sendSmsWithConsent({

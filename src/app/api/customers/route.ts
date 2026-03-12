@@ -20,10 +20,24 @@ export async function GET(req: NextRequest) {
     const where: Prisma.CustomerWhereInput = { tenantId };
 
     if (search) {
+      // Normalize phone search: strip non-digits so "(416) 555-1234" matches "+14165551234"
+      const digits = search.replace(/\D/g, "");
+      const isPhoneSearch = digits.length >= 4; // treat as phone if 4+ digits
+
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
         { phone: { contains: search } },
         { email: { contains: search, mode: "insensitive" } },
+        // Normalized phone search: match the raw digits against stored phone numbers
+        ...(isPhoneSearch
+          ? [
+              { phone: { contains: digits } },
+              // Also try with +1 prefix for North American numbers
+              ...(digits.length === 10 ? [{ phone: { contains: `+1${digits}` } }] : []),
+              // Also try without +1 prefix if user searched with country code
+              ...(digits.length === 11 && digits.startsWith("1") ? [{ phone: { contains: digits.slice(1) } }] : []),
+            ]
+          : []),
       ];
     }
 

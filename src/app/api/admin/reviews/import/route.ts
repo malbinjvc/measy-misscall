@@ -6,6 +6,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { logAdminAction } from "@/lib/admin-log";
 import { reviewImportPayloadSchema } from "@/lib/validations";
 import { parseRelativeDateToDays, resolveImportDates } from "@/lib/review-date-parser";
+import { hasFeature, featureGatedResponse } from "@/lib/feature-gate";
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,6 +42,11 @@ export async function POST(req: NextRequest) {
     });
     if (!tenant) {
       return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
+    }
+
+    // Check if tenant's plan includes review import
+    if (!(await hasFeature(tenantId, "review_import"))) {
+      return NextResponse.json(featureGatedResponse("Review import"), { status: 403 });
     }
 
     // Parse all relative dates

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import prismaRead from "@/lib/prisma-read";
 import { Prisma } from "@prisma/client";
 import { sanitizePagination } from "@/lib/utils";
 import { updateCallSchema } from "@/lib/validations";
@@ -17,34 +18,48 @@ export async function GET(req: NextRequest) {
     const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
     const ivrResponse = searchParams.get("ivrResponse");
+    const cursor = searchParams.get("cursor"); // cursor-based pagination (ID of last item)
 
     const where: Prisma.CallWhereInput = { tenantId: session.user.tenantId };
     if (status) where.status = status as Prisma.EnumCallStatusFilter;
     if (ivrResponse) where.ivrResponse = ivrResponse as Prisma.EnumIvrResponseFilter;
 
-    const [calls, total] = await Promise.all([
-      prisma.call.findMany({
+    // Cursor-based pagination avoids slow OFFSET scans on deep pages (page 500+).
+    // If cursor is provided, use keyset pagination and skip count(); otherwise fall back to offset.
+    const useCursor = !!cursor;
+
+    // Use read replica for listing queries (read-heavy)
+    // Skip count() in cursor mode — derive hasMore from extra row instead
+    const [rawCalls, total] = await Promise.all([
+      prismaRead.call.findMany({
         where,
         orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        take: useCursor ? pageSize + 1 : pageSize,
+        ...(useCursor
+          ? { cursor: { id: cursor }, skip: 1 }
+          : { skip: (page - 1) * pageSize }),
         include: {
           smsLogs: {
             select: { id: true, type: true, status: true, toNumber: true, sentAt: true },
-            take: 5, // Limit per call — most calls have 0-2 SMS logs
+            take: 5,
           },
         },
       }),
-      prisma.call.count({ where }),
+      useCursor ? Promise.resolve(-1) : prismaRead.call.count({ where }),
     ]);
+
+    const hasMore = useCursor ? rawCalls.length > pageSize : page < Math.ceil(total / pageSize);
+    const calls = useCursor && rawCalls.length > pageSize ? rawCalls.slice(0, pageSize) : rawCalls;
+    const nextCursor = calls.length > 0 && hasMore ? calls[calls.length - 1].id : null;
 
     return NextResponse.json({
       success: true,
       data: calls,
-      total,
+      ...(useCursor ? {} : { total, totalPages: Math.ceil(total / pageSize) }),
       page,
       pageSize,
-      totalPages: Math.ceil(total / pageSize),
+      nextCursor,
+      hasMore,
     });
   } catch (error) {
     console.error("Calls fetch error:", error);

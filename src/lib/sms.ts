@@ -13,6 +13,7 @@ interface SendSmsParams {
   body: string;
   type: SmsType;
   callId?: string;
+  skipWalletCharge?: boolean; // Platform-level SMS (e.g. onboarding OTP) — not charged to tenant
 }
 
 export async function sendSms({
@@ -22,6 +23,7 @@ export async function sendSms({
   body,
   type,
   callId,
+  skipWalletCharge,
 }: SendSmsParams) {
   const client = await getTwilioClient();
   const fromNumber = from || process.env.TWILIO_PHONE_NUMBER;
@@ -53,9 +55,12 @@ export async function sendSms({
     });
 
     // Charge wallet for SMS usage (fire-and-forget)
-    chargeForUsage(tenantId, "sms", 1).catch((err) =>
-      console.error("SMS wallet charge failed:", err)
-    );
+    // Only skip charging when explicitly flagged (e.g. onboarding OTP — platform pays)
+    if (!skipWalletCharge) {
+      chargeForUsage(tenantId, "sms", 1).catch((err) =>
+        console.error("SMS wallet charge failed:", err)
+      );
+    }
 
     return { success: true, messageSid: message.sid, smsLogId: smsLog.id };
   } catch (error: unknown) {

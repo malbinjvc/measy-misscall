@@ -4,6 +4,7 @@ import { buildIvrResponse, buildErrorResponse } from "@/lib/twiml";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { getSharedAudioUrl } from "@/lib/elevenlabs";
 import { validateTwilioSignature } from "@/lib/twilio";
+import { hasFeature } from "@/lib/feature-gate";
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,6 +47,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Check if tenant's plan includes missed call IVR
+    const ivrEnabled = await hasFeature(tenant.id, "missed_call_ivr");
+
     // Create call record as MISSED (call arrived via carrier forwarding)
     const call = await prisma.call.create({
       data: {
@@ -55,6 +59,13 @@ export async function POST(req: NextRequest) {
         status: "MISSED",
       },
     });
+
+    // If IVR not enabled on plan, still record the call but don't play IVR
+    if (!ivrEnabled) {
+      return new NextResponse(buildErrorResponse(getSharedAudioUrl("error")), {
+        headers: { "Content-Type": "text/xml" },
+      });
+    }
 
     // Play IVR directly — no Dial step needed
     // Call charges are handled in /api/twilio/call-status based on actual duration

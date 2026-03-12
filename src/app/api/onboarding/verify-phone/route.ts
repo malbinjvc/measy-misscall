@@ -69,13 +69,14 @@ export async function POST(req: NextRequest) {
 
     const fromNumber = settings?.sharedTwilioNumber || undefined;
 
-    // Send SMS
+    // Send SMS — onboarding OTP is platform-paid, not charged to tenant
     const result = await sendSms({
       tenantId,
       to: normalized,
       from: fromNumber,
       body: `Your Measy verification code is: ${code}. It expires in 10 minutes.`,
       type: "OTP_VERIFICATION",
+      skipWalletCharge: true,
     });
 
     if (!result.success) {

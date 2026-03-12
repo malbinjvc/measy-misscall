@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { createCampaignSchema } from "@/lib/validations";
 import { sanitizePagination } from "@/lib/utils";
+import { hasFeature, featureGatedResponse } from "@/lib/feature-gate";
 import { ZodError } from "zod";
 
 export async function GET(req: NextRequest) {
@@ -11,6 +12,10 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.tenantId) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!(await hasFeature(session.user.tenantId, "campaigns"))) {
+      return NextResponse.json(featureGatedResponse("Campaigns"), { status: 403 });
     }
 
     const { searchParams } = req.nextUrl;
@@ -53,10 +58,16 @@ export async function POST(req: NextRequest) {
     }
 
     const tenantId = session.user.tenantId;
+
+    if (!(await hasFeature(tenantId, "campaigns"))) {
+      return NextResponse.json(featureGatedResponse("Campaigns"), { status: 403 });
+    }
+
     const body = await req.json();
     const validated = createCampaignSchema.parse(body);
 
     // Get eligible recipients (customers with SMS consent, optionally filtered)
+    // Bounded to 500 to prevent excessive memory usage + campaign size
     const eligibleCustomers = await prisma.customer.findMany({
       where: {
         tenantId,
@@ -64,6 +75,7 @@ export async function POST(req: NextRequest) {
         ...(validated.customerIds?.length && { id: { in: validated.customerIds } }),
       },
       select: { id: true, name: true, phone: true },
+      take: 500,
     });
 
     const campaign = await prisma.campaign.create({

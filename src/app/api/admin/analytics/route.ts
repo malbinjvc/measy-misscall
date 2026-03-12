@@ -64,8 +64,8 @@ export async function GET() {
       // Customer cross-tenant insights via raw SQL
       prisma.$queryRaw<Array<{ totalUniqueCustomers: number; multiShopCustomers: number }>>`
         SELECT
-          COUNT(DISTINCT phone)::int as "totalUniqueCustomers",
-          COUNT(*)::int FILTER (WHERE shop_count >= 2) as "multiShopCustomers"
+          COUNT(*)::int as "totalUniqueCustomers",
+          COALESCE(SUM(CASE WHEN shop_count >= 2 THEN 1 ELSE 0 END), 0)::int as "multiShopCustomers"
         FROM (
           SELECT phone, COUNT(DISTINCT "tenantId") as shop_count
           FROM "Customer"

@@ -1,11 +1,8 @@
-import fs from "fs";
-import path from "path";
 import prisma from "@/lib/prisma";
 import { decrypt, isEncrypted } from "@/lib/crypto";
+import { uploadFile, fileExists, getFileUrl } from "@/lib/storage";
 
 const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
-
-const IVR_DIR = path.join(process.cwd(), "public", "uploads", "ivr");
 
 export const SHARED_IVR_MESSAGES: Record<string, string> = {
   "noinput": "We did not receive any input. Goodbye.",
@@ -70,12 +67,6 @@ async function synthesize(
   return Buffer.from(arrayBuffer);
 }
 
-function ensureDir() {
-  if (!fs.existsSync(IVR_DIR)) {
-    fs.mkdirSync(IVR_DIR, { recursive: true });
-  }
-}
-
 export async function generateIvrAudio(
   businessName: string,
   tenantId: string
@@ -92,17 +83,16 @@ export async function generateIvrAudio(
     const buffer = await synthesize(text, config.apiKey, config.voiceId);
     if (!buffer) return null;
 
-    ensureDir();
     const safeTenantId = tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
     const filename = `${safeTenantId}-${Date.now()}.mp3`;
-    fs.writeFileSync(path.join(IVR_DIR, filename), buffer);
+    const result = await uploadFile(buffer, filename, "uploads/ivr", "audio/mpeg");
 
     // Also generate shared messages if they don't exist yet
     generateSharedIvrAudios().catch((err) =>
       console.warn("Shared IVR audio generation failed (non-blocking):", err)
     );
 
-    return `/uploads/ivr/${filename}`;
+    return result.url;
   } catch (error) {
     console.error("Failed to generate IVR audio:", error);
     return null;
@@ -117,19 +107,16 @@ export async function generateSharedIvrAudios(): Promise<boolean> {
       return false;
     }
 
-    ensureDir();
-
     for (const [key, text] of Object.entries(SHARED_IVR_MESSAGES)) {
       const filename = `shared-${key}.mp3`;
-      const filePath = path.join(IVR_DIR, filename);
 
       // Skip if already exists
-      if (fs.existsSync(filePath)) continue;
+      if (await fileExists("uploads/ivr", filename)) continue;
 
       console.log(`Generating shared IVR audio: ${key}...`);
       const buffer = await synthesize(text, config.apiKey, config.voiceId);
       if (buffer) {
-        fs.writeFileSync(filePath, buffer);
+        await uploadFile(buffer, filename, "uploads/ivr", "audio/mpeg");
       }
     }
 
@@ -141,9 +128,7 @@ export async function generateSharedIvrAudios(): Promise<boolean> {
 }
 
 export function getSharedAudioUrl(key: string): string | null {
-  const filePath = path.join(IVR_DIR, `shared-${key}.mp3`);
-  if (fs.existsSync(filePath)) {
-    return `/uploads/ivr/shared-${key}.mp3`;
-  }
-  return null;
+  // In production (GCS), the file always has a predictable URL
+  // In dev, we need to check local filesystem
+  return getFileUrl("uploads/ivr", `shared-${key}.mp3`);
 }

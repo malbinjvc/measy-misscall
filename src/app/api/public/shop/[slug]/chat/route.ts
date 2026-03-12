@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { chatMessageSchema } from "@/lib/validations";
+import { hasFeature } from "@/lib/feature-gate";
 
 const chatTenantInclude = {
   services: { where: { isActive: true }, orderBy: { sortOrder: "asc" as const } },
@@ -34,12 +35,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Business not found" }, { status: 404 });
     }
 
-    // Check subscription eligibility (Professional+ = sortOrder >= 2)
-    const hasAiChat = tenant.subscription?.plan
-      ? tenant.subscription.plan.sortOrder >= 2
-      : false;
-
-    if (!hasAiChat) {
+    // Check subscription eligibility via feature gate
+    if (!(await hasFeature(tenant.id, "ai_chat"))) {
       return NextResponse.json(
         { success: false, error: "AI chat is not available for this business" },
         { status: 403 }

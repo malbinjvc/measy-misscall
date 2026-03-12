@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import prismaRead from "@/lib/prisma-read";
 import { Prisma } from "@prisma/client";
+
+// Server-side cache for unfiltered dashboard stats (per tenant, 60s TTL)
+const statsCache = new Map<string, { data: Record<string, unknown>; expiresAt: number }>();
+const STATS_CACHE_TTL_MS = 60_000;
 
 /**
  * Get Toronto's UTC offset in hours for a given date.
@@ -49,6 +54,14 @@ export async function GET(request: NextRequest) {
 
     const hasRange = from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
 
+    // Serve from cache for unfiltered requests (the common dashboard load)
+    if (!hasRange) {
+      const cached = statsCache.get(tenantId);
+      if (cached && Date.now() < cached.expiresAt) {
+        return NextResponse.json({ success: true, data: cached.data });
+      }
+    }
+
     const appointmentDateFilter = hasRange
       ? dateMode === "created"
         ? { createdAt: { gte: torontoStartOfDay(from), lte: torontoEndOfDay(to) } }
@@ -70,6 +83,7 @@ export async function GET(request: NextRequest) {
         : Prisma.sql`AND a."date" >= (${new Date(from + "T00:00:00.000Z")} AT TIME ZONE 'UTC') AND a."date" <= (${new Date(to + "T23:59:59.999Z")} AT TIME ZONE 'UTC')`
       : Prisma.empty;
 
+    // Use read replica for all stats queries (read-heavy, no writes)
     const [
       missedCalls,
       totalAppointments,
@@ -80,32 +94,32 @@ export async function GET(request: NextRequest) {
       callbackRequests,
       revenueRows,
     ] = await Promise.all([
-      prisma.call.count({
+      prismaRead.call.count({
         where: { tenantId, status: "MISSED", ...createdAtFilter },
       }),
-      prisma.appointment.count({
+      prismaRead.appointment.count({
         where: { tenantId, ...appointmentDateFilter },
       }),
-      prisma.appointment.count({
+      prismaRead.appointment.count({
         where: { tenantId, status: "PENDING" },
       }),
-      prisma.appointment.count({
+      prismaRead.appointment.count({
         where: { tenantId, status: "CANCELLED", ...appointmentDateFilter },
       }),
-      prisma.appointment.count({
+      prismaRead.appointment.count({
         where: { tenantId, status: "NO_SHOW", ...appointmentDateFilter },
       }),
-      prisma.smsLog.count({
+      prismaRead.smsLog.count({
         where: { tenantId, type: { not: "OTP_VERIFICATION" }, ...createdAtFilter },
       }),
-      prisma.call.count({
+      prismaRead.call.count({
         where: { tenantId, ivrResponse: "CALLBACK", callbackHandled: false },
       }),
       // Revenue: full SQL calculation covering single-item + multi-item + sub-options
       // Single-item revenue: (service.price + option.price) * quantity
       // Multi-item revenue: SUM per item of (service.price + option.price) * quantity
       // Sub-option revenue: SUM of selected sub-option prices (via unnest on the array)
-      prisma.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
+      prismaRead.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
         WITH single_item_rev AS (
           SELECT COALESCE(SUM(
             (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * a.quantity
@@ -163,19 +177,28 @@ export async function GET(request: NextRequest) {
     const row = revenueRows[0];
     const totalRevenue = (row?.single_rev || 0) + (row?.multi_rev || 0) + (row?.sub_rev || 0) + (row?.multi_sub_rev || 0);
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        missedCalls,
-        totalAppointments,
-        pendingAppointments,
-        cancelledAppointments,
-        noShowAppointments,
-        totalSms,
-        totalRevenue,
-        callbackRequests,
-      },
-    });
+    const statsData = {
+      missedCalls,
+      totalAppointments,
+      pendingAppointments,
+      cancelledAppointments,
+      noShowAppointments,
+      totalSms,
+      totalRevenue,
+      callbackRequests,
+    };
+
+    // Cache unfiltered results for 60s
+    if (!hasRange) {
+      statsCache.set(tenantId, { data: statsData, expiresAt: Date.now() + STATS_CACHE_TTL_MS });
+    }
+
+    const response = NextResponse.json({ success: true, data: statsData });
+    // Browser-level cache: works across server instances (Cloud Run, serverless).
+    // private = authenticated data, max-age = serve from browser cache,
+    // stale-while-revalidate = show stale while refreshing in background.
+    response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=30");
+    return response;
   } catch (error) {
     console.error("Dashboard stats error:", error);
     return NextResponse.json(

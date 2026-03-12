@@ -240,6 +240,7 @@ export async function POST(req: NextRequest) {
       case "SUBSCRIPTION": {
         const subscriptionSchema = z.object({
           planId: z.string().min(1, "Plan ID is required").optional(),
+          billingInterval: z.enum(["annual", "monthly"]).default("annual"),
         });
         const subscriptionData = subscriptionSchema.parse(data);
 
@@ -255,8 +256,13 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: false, error: "Plan not found" }, { status: 400 });
           }
 
+          // Pick the right Stripe price based on billing interval
+          const priceId = subscriptionData.billingInterval === "monthly"
+            ? plan.monthlyStripePriceId
+            : plan.stripePriceId;
+
           // If Stripe is configured, create checkout session
-          if (plan.stripePriceId && process.env.STRIPE_SECRET_KEY) {
+          if (priceId && process.env.STRIPE_SECRET_KEY) {
             const { createStripeCustomer, createCheckoutSession } = await import("@/lib/stripe");
 
             if (!subTenant) {
@@ -282,7 +288,7 @@ export async function POST(req: NextRequest) {
 
             const checkoutSession = await createCheckoutSession({
               customerId: stripeCustomerId,
-              priceId: plan.stripePriceId,
+              priceId,
               tenantId,
               successUrl: `${baseUrl}/dashboard/onboarding?session_id={CHECKOUT_SESSION_ID}`,
               cancelUrl: `${baseUrl}/dashboard/onboarding`,
@@ -314,21 +320,32 @@ export async function POST(req: NextRequest) {
       }
 
       case "REVIEW": {
-        // Create default business hours if not exists
-        const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
-        for (const day of days) {
-          await prisma.businessHours.upsert({
-            where: { tenantId_day: { tenantId, day } },
-            update: {},
-            create: {
-              tenantId,
-              day,
-              isOpen: day !== "SUNDAY",
-              openTime: "09:00",
-              closeTime: day === "SATURDAY" ? "14:00" : "17:00",
-            },
-          });
+        // Idempotency: skip if tenant is already active (duplicate Go Live clicks)
+        const currentTenantStatus = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { status: true },
+        });
+        if (currentTenantStatus?.status === "ACTIVE") {
+          return NextResponse.json({ success: true });
         }
+
+        // Create default business hours — batch all 7 upserts in a single transaction
+        const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
+        await prisma.$transaction(
+          days.map((day) =>
+            prisma.businessHours.upsert({
+              where: { tenantId_day: { tenantId, day } },
+              update: {},
+              create: {
+                tenantId,
+                day,
+                isOpen: day !== "SUNDAY",
+                openTime: "09:00",
+                closeTime: day === "SATURDAY" ? "14:00" : "17:00",
+              },
+            })
+          )
+        );
 
         const activeTenant = await prisma.tenant.update({
           where: { id: tenantId },
@@ -349,14 +366,12 @@ export async function POST(req: NextRequest) {
             console.warn("IVR audio generation failed (non-blocking):", err);
           });
 
-        // Fire-and-forget: load initial wallet funds ($15 CAD)
+        // Ensure wallet exists for the tenant (no initial charge)
         if (activeTenant.stripeCustomerId) {
           import("@/lib/wallet")
-            .then(({ loadInitialFunds }) =>
-              loadInitialFunds(tenantId, activeTenant.stripeCustomerId!)
-            )
+            .then(({ getOrCreateWallet }) => getOrCreateWallet(tenantId))
             .catch((err) => {
-              console.warn("Initial wallet load failed (non-blocking):", err);
+              console.warn("Wallet creation failed (non-blocking):", err);
             });
         }
 

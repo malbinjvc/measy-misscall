@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -37,19 +37,46 @@ export default function CallsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [ivrFilter, setIvrFilter] = useState("");
   const queryClient = useQueryClient();
+  // Cursor stack: tracks cursor IDs for each page visited (enables backward navigation)
+  const cursorStackRef = useRef<string[]>([]);
+  const [currentCursor, setCurrentCursor] = useState<string | null>(null);
+
+  const resetPagination = useCallback(() => {
+    setPage(1);
+    setCurrentCursor(null);
+    cursorStackRef.current = [];
+  }, []);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["calls", page, statusFilter, ivrFilter],
+    queryKey: ["calls", page, statusFilter, ivrFilter, currentCursor],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
       if (ivrFilter) params.set("ivrResponse", ivrFilter);
+      if (currentCursor) params.set("cursor", currentCursor);
       const res = await fetch(`/api/calls?${params}`);
       if (!res.ok) throw new Error("Request failed");
       return res.json();
     },
     staleTime: 60000,
   });
+
+  const goNext = useCallback(() => {
+    if (!data?.nextCursor) return;
+    cursorStackRef.current.push(data.nextCursor);
+    setCurrentCursor(data.nextCursor);
+    setPage((p) => p + 1);
+  }, [data?.nextCursor]);
+
+  const goPrev = useCallback(() => {
+    if (page <= 1) return;
+    cursorStackRef.current.pop();
+    const prevCursor = cursorStackRef.current.length > 0
+      ? cursorStackRef.current[cursorStackRef.current.length - 1]
+      : null;
+    setCurrentCursor(prevCursor);
+    setPage((p) => p - 1);
+  }, [page]);
 
   const callbackMutation = useMutation({
     mutationFn: async ({ callId, callbackHandled }: { callId: string; callbackHandled: boolean }) => {
@@ -73,7 +100,7 @@ export default function CallsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); resetPagination(); }}>
           <option value="">All Statuses</option>
           <option value="MISSED">Missed</option>
           <option value="ANSWERED">Answered</option>
@@ -81,7 +108,7 @@ export default function CallsPage() {
           <option value="BUSY">Busy</option>
           <option value="FAILED">Failed</option>
         </Select>
-        <Select value={ivrFilter} onChange={(e) => { setIvrFilter(e.target.value); setPage(1); }}>
+        <Select value={ivrFilter} onChange={(e) => { setIvrFilter(e.target.value); resetPagination(); }}>
           <option value="">All IVR Responses</option>
           <option value="CALLBACK">Callback</option>
           <option value="BOOKING_LINK">Booking Link</option>
@@ -169,16 +196,16 @@ export default function CallsPage() {
           </div>
 
           {/* Pagination */}
-          {data.totalPages > 1 && (
+          {(data.hasMore || page > 1) && (
             <div className="flex items-center justify-between mt-4">
               <p className="text-sm text-muted-foreground">
-                Page {data.page} of {data.totalPages} ({data.total} total)
+                Page {page}{data.total ? ` of ${data.totalPages} (${data.total} total)` : ""}
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page <= 1}>
+                <Button variant="outline" size="sm" onClick={goPrev} disabled={page <= 1}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setPage(page + 1)} disabled={page >= data.totalPages}>
+                <Button variant="outline" size="sm" onClick={goNext} disabled={!data.hasMore}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>

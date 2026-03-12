@@ -28,12 +28,12 @@ const adminLinks = [
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
-const PREFETCH_ROUTES: Record<string, { queryKey: unknown[]; url: string }> = {
-  "/admin": { queryKey: ["admin-stats"], url: "/api/admin/analytics" },
+const PREFETCH_ROUTES: Record<string, { queryKey: unknown[]; url: string; extractData?: boolean }> = {
+  "/admin": { queryKey: ["admin-stats"], url: "/api/admin/analytics", extractData: true },
   "/admin/tenants": { queryKey: ["admin-tenants", 1, ""], url: "/api/admin/tenants?page=1&pageSize=20" },
   "/admin/plans": { queryKey: ["admin-plans"], url: "/api/admin/plans" },
-  "/admin/analytics": { queryKey: ["admin-stats"], url: "/api/admin/analytics" },
-  "/admin/settings": { queryKey: ["platform-settings"], url: "/api/admin/settings" },
+  "/admin/analytics": { queryKey: ["admin-stats"], url: "/api/admin/analytics", extractData: true },
+  "/admin/settings": { queryKey: ["platform-settings"], url: "/api/admin/settings", extractData: true },
 };
 
 export function AdminSidebar() {
@@ -48,7 +48,7 @@ export function AdminSidebar() {
         queryFn: async () => {
           const res = await fetch(config.url);
           const json = await res.json();
-          return json.success ? json.data : json;
+          return config.extractData ? (json.success ? json.data : json) : json;
         },
         staleTime: 60000,
       });
