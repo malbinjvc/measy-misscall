@@ -45,7 +45,7 @@ export default function AdminPlansPage() {
   });
   const [featureInput, setFeatureInput] = useState("");
 
-  const { data, isLoading } = useQuery<{ data: Plan[] }>({
+  const { data, isLoading, isError } = useQuery<{ data: Plan[] }>({
     queryKey: ["admin-plans"],
     queryFn: async () => {
       const res = await fetch("/api/admin/plans");
@@ -126,7 +126,9 @@ export default function AdminPlansPage() {
     <div>
       <PageHeader title="Plans" description="Manage subscription plans" action={{ label: "Add Plan", onClick: openCreate, icon: <Plus className="h-4 w-4 mr-2" /> }} />
 
-      {isLoading ? <LoadingTable /> : (
+      {isError ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">Failed to load plans. Please refresh.</div>
+      ) : isLoading ? <LoadingTable /> : (
         <div className="rounded-lg border">
           <Table>
             <TableHeader>

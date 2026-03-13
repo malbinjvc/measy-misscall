@@ -10,8 +10,8 @@ export function verifyCsrf(req: NextRequest): NextResponse | null {
   // Same-origin requests (e.g. server-side calls) may omit Origin — allow
   if (!origin) return null;
 
-  // Allow localhost in development
-  if (origin.startsWith("http://localhost:")) return null;
+  // Allow localhost only in development
+  if (process.env.NODE_ENV === "development" && origin.startsWith("http://localhost:")) return null;
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (appUrl && !origin.startsWith(appUrl)) {

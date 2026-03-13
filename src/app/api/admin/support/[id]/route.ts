@@ -24,6 +24,7 @@ export async function GET(
         tenant: { select: { name: true, email: true } },
         messages: {
           orderBy: { createdAt: "asc" },
+          take: 200,
         },
       },
     });

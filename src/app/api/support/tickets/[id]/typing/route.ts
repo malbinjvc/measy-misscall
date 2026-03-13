@@ -13,7 +13,7 @@ export async function GET(
     return NextResponse.json({ success: false }, { status: 401 });
   }
   const { id } = await params;
-  const typing = getTyping(id, "TENANT");
+  const typing = await getTyping(id, "TENANT");
   return NextResponse.json({ success: true, typing });
 }
 
@@ -27,6 +27,6 @@ export async function POST(
     return NextResponse.json({ success: false }, { status: 401 });
   }
   const { id } = await params;
-  setTyping(id, "TENANT", session.user.name || "Tenant");
+  await setTyping(id, "TENANT", session.user.name || "Tenant");
   return NextResponse.json({ success: true });
 }

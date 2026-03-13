@@ -266,7 +266,7 @@ export default function SupportPage() {
       return json.data;
     },
     enabled: !!selectedTicketId && view === "detail",
-    refetchInterval: 3000,
+    refetchInterval: 15000,
   });
 
   useQuery({
@@ -278,7 +278,7 @@ export default function SupportPage() {
       return json;
     },
     enabled: !!selectedTicketId && view === "detail",
-    refetchInterval: 2000,
+    refetchInterval: 5000,
   });
 
   const createMutation = useMutation({

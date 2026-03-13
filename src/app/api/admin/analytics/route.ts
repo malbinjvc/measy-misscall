@@ -3,11 +3,20 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 
+// Server-side cache for admin analytics (expensive global queries, admin-only)
+let analyticsCache: { data: Record<string, unknown>; expiresAt: number } | null = null;
+const ANALYTICS_CACHE_TTL_MS = 60_000; // 60 seconds
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (session?.user?.role !== "SUPER_ADMIN") {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
+    }
+
+    // Serve from cache if fresh
+    if (analyticsCache && Date.now() < analyticsCache.expiresAt) {
+      return NextResponse.json({ success: true, data: analyticsCache.data });
     }
 
     const startOfMonth = new Date();
@@ -123,27 +132,29 @@ export async function GET() {
       smsLogs: t.smsLogs,
     }));
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        totalTenants,
-        activeTenants,
-        totalCalls,
-        totalAppointments,
-        newTenantsThisMonth,
-        totalRevenue,
-        tenantStats: formattedTenantStats,
-        customerInsights: {
-          totalUniqueCustomers: insights?.totalUniqueCustomers ?? 0,
-          multiShopCustomers: insights?.multiShopCustomers ?? 0,
-          distribution: distribution.map((d) => ({
-            shopCount: d.shopCount,
-            customerCount: d.customerCount,
-          })),
-          topMultiShopCustomers,
-        },
+    const analyticsData = {
+      totalTenants,
+      activeTenants,
+      totalCalls,
+      totalAppointments,
+      newTenantsThisMonth,
+      totalRevenue,
+      tenantStats: formattedTenantStats,
+      customerInsights: {
+        totalUniqueCustomers: insights?.totalUniqueCustomers ?? 0,
+        multiShopCustomers: insights?.multiShopCustomers ?? 0,
+        distribution: distribution.map((d) => ({
+          shopCount: d.shopCount,
+          customerCount: d.customerCount,
+        })),
+        topMultiShopCustomers,
       },
-    });
+    };
+
+    // Cache for 60s
+    analyticsCache = { data: analyticsData, expiresAt: Date.now() + ANALYTICS_CACHE_TTL_MS };
+
+    return NextResponse.json({ success: true, data: analyticsData });
   } catch (error) {
     console.error("Analytics fetch failed:", error);
     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });

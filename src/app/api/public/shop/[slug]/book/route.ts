@@ -191,9 +191,10 @@ export async function POST(
       },
     });
 
-    if (activeCount >= 10) {
+    const MAX_ACTIVE_BOOKINGS = 3;
+    if (activeCount >= MAX_ACTIVE_BOOKINGS) {
       return NextResponse.json(
-        { success: false, error: "You already have 3 active appointments. Please cancel or complete an existing one before booking again." },
+        { success: false, error: `You already have ${MAX_ACTIVE_BOOKINGS} active appointments. Please cancel or complete an existing one before booking again.` },
         { status: 400 }
       );
     }

@@ -47,7 +47,7 @@ export default function CallsPage() {
     cursorStackRef.current = [];
   }, []);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["calls", page, statusFilter, ivrFilter, currentCursor],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
@@ -117,7 +117,9 @@ export default function CallsPage() {
         </Select>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <EmptyState icon={<PhoneCall className="h-12 w-12" />} title="Failed to load calls" description="Please try refreshing the page." />
+      ) : isLoading ? (
         <LoadingTable />
       ) : !data?.data?.length ? (
         <EmptyState

@@ -20,9 +20,18 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams;
     const { page, pageSize } = sanitizePagination(searchParams.get("page"), searchParams.get("pageSize"));
     const status = searchParams.get("status");
+    const search = searchParams.get("search")?.trim().slice(0, 100);
 
     const where: Prisma.TenantWhereInput = {};
     if (status) where.status = status as Prisma.EnumTenantStatusFilter;
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+        { slug: { contains: search, mode: "insensitive" } },
+      ];
+    }
 
     const [tenants, total] = await Promise.all([
       prisma.tenant.findMany({
@@ -30,8 +39,24 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: {
-          _count: { select: { users: true, calls: true, appointments: true } },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          email: true,
+          phone: true,
+          status: true,
+          industry: true,
+          createdAt: true,
+          updatedAt: true,
+          assignedTwilioNumber: true,
+          businessPhoneNumber: true,
+          stripeCustomerId: true,
+          customDomain: true,
+          customDomainVerified: true,
+          logoUrl: true,
+          // Exclude websiteConfig (500KB+) and expensive count subqueries
+          _count: { select: { users: true } },
           subscription: { include: { plan: true } },
         },
       }),

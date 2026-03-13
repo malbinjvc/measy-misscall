@@ -38,7 +38,8 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Customer not found" }, { status: 404 });
     }
 
-    // Match appointments by exact phone or last-10-digit suffix (handles legacy format differences)
+    // Match appointments by exact phone formats (handles legacy format differences)
+    // Uses exact matches instead of endsWith to leverage btree indexes
     const normalizedPhone = normalizePhoneForStorage(customer.phone);
     const appointments = await prisma.appointment.findMany({
       where: {
@@ -46,7 +47,10 @@ export async function GET(
         OR: [
           { customerPhone: customer.phone },
           { customerPhone: normalizedPhone },
-          ...(normalizedPhone.length === 10 ? [{ customerPhone: { endsWith: normalizedPhone } }] : []),
+          ...(normalizedPhone.length === 10 ? [
+            { customerPhone: `+1${normalizedPhone}` },
+            { customerPhone: `1${normalizedPhone}` },
+          ] : []),
         ],
       },
       orderBy: { createdAt: "desc" },
@@ -272,45 +276,50 @@ export async function PUT(
         return NextResponse.json({ success: false, error: "Selected time is outside business hours" }, { status: 400 });
       }
 
-      // Check overlapping appointments
+      // Overlap check + update in a transaction with advisory lock to prevent race conditions
       const appointmentDate = new Date(date + "T00:00:00.000Z");
       const endOfDay = new Date(date + "T23:59:59.999Z");
 
-      const overlapping = await prisma.appointment.findFirst({
-        where: {
-          tenantId: tenant.id,
-          id: { not: appointmentId },
-          date: { gte: appointmentDate, lte: endOfDay },
-          status: { not: "CANCELLED" },
-          AND: [
-            { startTime: { lt: endTime } },
-            { endTime: { gt: startTime } },
-          ],
-        },
-      });
+      const updated = await prisma.$transaction(async (tx) => {
+        // Advisory lock on tenant+date prevents phantom reads from concurrent reschedules
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${tenant.id + ':' + date}))`;
 
-      if (overlapping) {
-        return NextResponse.json({ success: false, error: "This time slot is already booked" }, { status: 409 });
-      }
-
-      const updated = await prisma.appointment.update({
-        where: { id: appointmentId },
-        data: {
-          date: new Date(date),
-          startTime,
-          endTime,
-        },
-        include: {
-          service: { select: { id: true, name: true, duration: true, price: true } },
-          serviceOption: { select: { id: true, name: true, duration: true, price: true } },
-          items: {
-            include: {
-              service: { select: { id: true, name: true, duration: true, price: true } },
-              serviceOption: { select: { id: true, name: true, duration: true, price: true } },
-            },
-            orderBy: { sortOrder: "asc" },
+        const overlapping = await tx.appointment.findFirst({
+          where: {
+            tenantId: tenant.id,
+            id: { not: appointmentId },
+            date: { gte: appointmentDate, lte: endOfDay },
+            status: { not: "CANCELLED" },
+            AND: [
+              { startTime: { lt: endTime } },
+              { endTime: { gt: startTime } },
+            ],
           },
-        },
+        });
+
+        if (overlapping) {
+          throw new Error("OVERLAP");
+        }
+
+        return tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            date: new Date(date),
+            startTime,
+            endTime,
+          },
+          include: {
+            service: { select: { id: true, name: true, duration: true, price: true } },
+            serviceOption: { select: { id: true, name: true, duration: true, price: true } },
+            items: {
+              include: {
+                service: { select: { id: true, name: true, duration: true, price: true } },
+                serviceOption: { select: { id: true, name: true, duration: true, price: true } },
+              },
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        });
       });
 
       return NextResponse.json({ success: true, data: updated });
@@ -318,6 +327,9 @@ export async function PUT(
 
     return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 });
   } catch (error) {
+    if (error instanceof Error && error.message === "OVERLAP") {
+      return NextResponse.json({ success: false, error: "This time slot is already booked" }, { status: 409 });
+    }
     console.error("Customer appointment action error:", error);
     return NextResponse.json({ success: false, error: "Server error" }, { status: 500 });
   }

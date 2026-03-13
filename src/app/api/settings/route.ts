@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { DayOfWeek } from "@prisma/client";
+import { DayOfWeek, Prisma } from "@prisma/client";
 import { normalizePhoneNumber } from "@/lib/utils";
 import { generateIvrAudio } from "@/lib/elevenlabs";
 import { businessProfileSchema, businessHoursSchema, websiteConfigSchema } from "@/lib/validations";
@@ -116,38 +116,55 @@ export async function PATCH(req: NextRequest) {
           )
         );
 
-        // Count future appointments that conflict with new hours (bounded query)
+        // Count future appointments that conflict with new hours using SQL
+        // instead of loading all rows into memory
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const futureAppointments = await prisma.appointment.findMany({
-          where: {
-            tenantId,
-            date: { gte: today },
-            status: { notIn: ["CANCELLED", "NO_SHOW"] },
-          },
-          select: { date: true, startTime: true, endTime: true },
-          take: 10000,
-        });
-
-        const DAY_NAMES_UPPER = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
         const hoursMap = new Map<string, BusinessHoursInput>(hoursData.hours.map((h: BusinessHoursInput) => [h.day, h]));
-        let affectedCount = 0;
-        for (const apt of futureAppointments) {
-          const dayName = DAY_NAMES_UPPER[new Date(apt.date).getUTCDay()];
-          const bh = hoursMap.get(dayName);
-          if (!bh || !bh.isOpen) { affectedCount++; continue; }
-          const [oh, om] = bh.openTime.split(":").map(Number);
-          const [ch, cm] = bh.closeTime.split(":").map(Number);
-          const openMin = oh * 60 + om;
-          const closeMin = ch * 60 + cm;
-          const [sh, sm] = apt.startTime.split(":").map(Number);
-          const [eh, em] = apt.endTime.split(":").map(Number);
-          const startMin = sh * 60 + sm;
-          const endMin = eh * 60 + em;
-          if (startMin < openMin || endMin > closeMin) affectedCount++;
-        }
 
-        return NextResponse.json({ success: true, affectedAppointments: affectedCount });
+        // Build conditions for each day's hours — appointments outside new hours are "affected"
+        // Day-of-week in PG: 0=Sunday, 1=Monday, ... 6=Saturday
+        const DAY_TO_DOW: Record<string, number> = {
+          SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3,
+          THURSDAY: 4, FRIDAY: 5, SATURDAY: 6,
+        };
+
+        // Count appointments on closed days + appointments outside open/close times
+        const closedDows = hoursData.hours
+          .filter((h: BusinessHoursInput) => !h.isOpen)
+          .map((h: BusinessHoursInput) => DAY_TO_DOW[h.day]);
+
+        const openDayConditions = hoursData.hours
+          .filter((h: BusinessHoursInput) => h.isOpen)
+          .map((h: BusinessHoursInput) => ({
+            dow: DAY_TO_DOW[h.day],
+            openTime: h.openTime,
+            closeTime: h.closeTime,
+          }));
+
+        const affectedRows = await prisma.$queryRaw<[{ count: number }]>`
+          SELECT COUNT(*)::int AS count
+          FROM "Appointment" a
+          WHERE a."tenantId" = ${tenantId}
+            AND a.date >= ${today}
+            AND a.status NOT IN ('CANCELLED', 'NO_SHOW')
+            AND (
+              -- Appointments on closed days
+              EXTRACT(DOW FROM a.date) = ANY(${closedDows}::int[])
+              -- Appointments outside business hours for open days
+              ${openDayConditions.length > 0
+                ? Prisma.sql`OR ${Prisma.join(
+                    openDayConditions.map((c) =>
+                      Prisma.sql`(EXTRACT(DOW FROM a.date) = ${c.dow} AND (a."startTime" < ${c.openTime} OR a."endTime" > ${c.closeTime}))`
+                    ),
+                    " OR "
+                  )}`
+                : Prisma.empty
+              }
+            )
+        `;
+
+        return NextResponse.json({ success: true, affectedAppointments: affectedRows[0]?.count ?? 0 });
       }
 
       case "twilio": {

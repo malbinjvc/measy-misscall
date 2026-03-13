@@ -2,6 +2,7 @@ import { withAuth } from "next-auth/middleware";
 import { NextRequest, NextResponse } from "next/server";
 
 // In-memory caches (Edge-compatible — no Prisma in middleware)
+const MAX_DOMAIN_CACHE_SIZE = 1000; // Prevent unbounded growth — evict oldest entries
 const domainCache = new Map<string, { slug: string; expiresAt: number } | null>();
 const CACHE_TTL_MS = 120_000; // 2 minutes
 
@@ -28,6 +29,16 @@ async function checkMaintenanceMode(req: NextRequest): Promise<boolean> {
   }
 }
 
+function evictDomainCacheIfNeeded() {
+  if (domainCache.size <= MAX_DOMAIN_CACHE_SIZE) return;
+  // Evict oldest entries (Map preserves insertion order)
+  const toDelete = domainCache.size - MAX_DOMAIN_CACHE_SIZE;
+  const keys = Array.from(domainCache.keys());
+  for (let i = 0; i < toDelete && i < keys.length; i++) {
+    domainCache.delete(keys[i]);
+  }
+}
+
 async function resolveDomain(req: NextRequest, hostname: string): Promise<{ slug: string } | null> {
   const cached = domainCache.get(hostname);
   if (cached !== undefined) {
@@ -41,11 +52,13 @@ async function resolveDomain(req: NextRequest, hostname: string): Promise<{ slug
     if (json.slug) {
       const entry = { slug: json.slug, expiresAt: Date.now() + CACHE_TTL_MS };
       domainCache.set(hostname, entry);
+      evictDomainCacheIfNeeded();
       return entry;
     }
   } catch { /* ignore */ }
 
   domainCache.set(hostname, null);
+  evictDomainCacheIfNeeded();
   return null;
 }
 

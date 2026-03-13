@@ -120,7 +120,7 @@ export default function CampaignDetailPage() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://yoursite.com";
   const bookingUrl = `${appUrl}/shop/${slug}`;
   const fullMessage = `${businessName}: ${campaign.message}\n\nBook now: ${bookingUrl}\nReply STOP to opt out.`;
-  const estimatedCost = (campaign.recipientCount * 0.035).toFixed(2);
+  const estimatedCost = (campaign.recipientCount * 0.035).toFixed(2); // estimate; actual rate from PlatformSettings
 
   return (
     <div>

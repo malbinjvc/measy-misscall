@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { Loader2, Save, CheckCircle2, XCircle, Phone, MessageSquare, Volume2, Image, Trash2 } from "lucide-react";
+import { Loader2, Save, CheckCircle2, XCircle, Phone, MessageSquare, Volume2, Image, Trash2, Wallet } from "lucide-react";
 
 interface PlatformSettings {
   sharedTwilioSid: string | null;
@@ -20,6 +20,7 @@ interface PlatformSettings {
   dashboardBannerType: string | null;
   dashboardBannerLink: string | null;
   dashboardBannerEnabled: boolean;
+  walletRatePerUnit: number | null;
   maintenanceMode: boolean;
 }
 
@@ -32,6 +33,7 @@ interface SettingsFormData {
   dashboardBannerType: string;
   dashboardBannerLink: string;
   dashboardBannerEnabled: boolean;
+  walletRatePerUnit: number;
   maintenanceMode: boolean;
 }
 
@@ -84,6 +86,7 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
     dashboardBannerType: settings.dashboardBannerType || "image",
     dashboardBannerLink: settings.dashboardBannerLink || "",
     dashboardBannerEnabled: settings.dashboardBannerEnabled || false,
+    walletRatePerUnit: settings.walletRatePerUnit ?? 0.035,
     maintenanceMode: settings.maintenanceMode || false,
   });
   // Track which sensitive fields the user has explicitly changed
@@ -413,6 +416,32 @@ function SettingsForm({ settings, mutation }: { settings: PlatformSettings; muta
               />
               <p className="text-xs text-muted-foreground">
                 If set, clicking the banner will open this link in a new tab.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Wallet Pricing */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5" /> Usage Pricing
+            </CardTitle>
+            <CardDescription>Set the per-unit cost for SMS and calls beyond the free tier</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Rate Per Unit (CAD)</Label>
+              <Input
+                type="number"
+                step="0.001"
+                min="0"
+                max="1"
+                value={form.walletRatePerUnit}
+                onChange={(e) => setForm((prev) => ({ ...prev, walletRatePerUnit: parseFloat(e.target.value) || 0 }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Cost per SMS message or per call minute after the plan&apos;s free tier is exhausted. Default: $0.035 CAD.
               </p>
             </div>
           </CardContent>

@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { usePlanFeatures } from "@/hooks/use-plan-features";
+import { prefetchRoute } from "@/lib/prefetch-routes";
 
 interface MobileLink {
   href: string;
@@ -49,40 +50,13 @@ const mobileLinks: MobileLink[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
-const PREFETCH_ROUTES: Record<string, { queryKey: unknown[]; url: string }> = {
-  "/dashboard/wallet": { queryKey: ["wallet", "1"], url: "/api/wallet?page=1&limit=15" },
-  "/dashboard/appointments": { queryKey: ["appointments", 1, null], url: "/api/appointments?page=1&pageSize=20" },
-  "/dashboard/customers": { queryKey: ["customers", 1, ""], url: "/api/customers?page=1&pageSize=20" },
-  "/dashboard/calls": { queryKey: ["calls", 1, "", ""], url: "/api/calls?page=1&pageSize=20" },
-  "/dashboard/sms-logs": { queryKey: ["sms-logs", 1, ""], url: "/api/sms?page=1&pageSize=20" },
-  "/dashboard/services": { queryKey: ["services"], url: "/api/services" },
-  "/dashboard/campaigns": { queryKey: ["campaigns", 1], url: "/api/campaigns?page=1&pageSize=20" },
-  "/dashboard/staff": { queryKey: ["staff"], url: "/api/staff" },
-  "/dashboard/billing": { queryKey: ["tenant"], url: "/api/tenant" },
-  "/dashboard/website": { queryKey: ["tenant"], url: "/api/tenant" },
-  "/dashboard/settings": { queryKey: ["tenant"], url: "/api/tenant" },
-};
-
 export function Header() {
   const { data: session } = useSession();
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  const prefetch = (href: string) => {
-    const config = PREFETCH_ROUTES[href];
-    if (config) {
-      queryClient.prefetchQuery({
-        queryKey: config.queryKey,
-        queryFn: async () => {
-          const res = await fetch(config.url);
-          const json = await res.json();
-          return json.success ? json.data : null;
-        },
-        staleTime: 60000,
-      });
-    }
-  };
+  const prefetch = (href: string) => prefetchRoute(queryClient, href);
 
   const { data: unreadCount } = useUnreadCount();
   const { hasFeature } = usePlanFeatures();

@@ -79,8 +79,16 @@ export function SessionGuard({
   }, [session, status, checkAndRedirect, router, pathname, requiredRole]);
 
   // On window/tab focus: directly fetch fresh session and check role
+  // Debounced to avoid redundant fetches when both focus + visibilitychange fire
+  const lastFocusCheck = useRef(0);
   useEffect(() => {
+    const DEBOUNCE_MS = 5000; // at most one check every 5 seconds
+
     const handleFocus = async () => {
+      const now = Date.now();
+      if (now - lastFocusCheck.current < DEBOUNCE_MS) return;
+      lastFocusCheck.current = now;
+
       try {
         // Fetch session directly from the API — bypasses any stale cache
         const res = await fetch("/api/auth/session");

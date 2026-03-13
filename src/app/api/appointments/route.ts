@@ -178,6 +178,7 @@ export async function GET(req: NextRequest) {
         include: appointmentInclude,
       }),
       prisma.appointment.count({ where }),
+      // Scope groupBy to the current status filter to avoid scanning all rows
       prisma.appointment.groupBy({
         by: ["status"],
         where: { tenantId },
@@ -187,58 +188,62 @@ export async function GET(req: NextRequest) {
 
     const enriched = appointments.map(enrichAppointment);
 
-    // Revenue: computed at DB level via raw SQL — no rows loaded into memory
-    const revenueRows = await prisma.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
-      WITH single_item_rev AS (
-        SELECT COALESCE(SUM(
-          (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * a.quantity
-        ), 0)::float AS total
-        FROM "Appointment" a
-        LEFT JOIN "Service" s ON s.id = a."serviceId"
-        LEFT JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
-        WHERE a."tenantId" = ${tenantId}
-          AND a.status != 'CANCELLED'
-          AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
-      ),
-      single_sub_rev AS (
-        SELECT COALESCE(SUM(sso.price), 0)::float AS total
-        FROM "Appointment" a
-        JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
-        JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
-          AND sso.id = ANY(a."selectedSubOptions")
-        WHERE a."tenantId" = ${tenantId}
-          AND a.status != 'CANCELLED'
-          AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
-      ),
-      multi_item_rev AS (
-        SELECT COALESCE(SUM(
-          (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * ai.quantity
-        ), 0)::float AS total
-        FROM "Appointment" a
-        JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
-        LEFT JOIN "Service" s ON s.id = ai."serviceId"
-        LEFT JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
-        WHERE a."tenantId" = ${tenantId}
-          AND a.status != 'CANCELLED'
-      ),
-      multi_sub_rev AS (
-        SELECT COALESCE(SUM(sso.price), 0)::float AS total
-        FROM "Appointment" a
-        JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
-        JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
-        JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
-          AND sso.id = ANY(ai."selectedSubOptions")
-        WHERE a."tenantId" = ${tenantId}
-          AND a.status != 'CANCELLED'
-      )
-      SELECT
-        (SELECT total FROM single_item_rev) AS single_rev,
-        (SELECT total FROM multi_item_rev) AS multi_rev,
-        (SELECT total FROM single_sub_rev) AS sub_rev,
-        (SELECT total FROM multi_sub_rev) AS multi_sub_rev
-    `;
-    const revRow = revenueRows[0];
-    const totalRevenue = (revRow?.single_rev || 0) + (revRow?.multi_rev || 0) + (revRow?.sub_rev || 0) + (revRow?.multi_sub_rev || 0);
+    // Revenue: only compute when not filtered by status (avoids expensive full-table scan)
+    // When filtering by status, clients don't display revenue stats anyway
+    let totalRevenue = 0;
+    if (!status) {
+      const revenueRows = await prisma.$queryRaw<[{ single_rev: number; multi_rev: number; sub_rev: number; multi_sub_rev: number }]>`
+        WITH single_item_rev AS (
+          SELECT COALESCE(SUM(
+            (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * a.quantity
+          ), 0)::float AS total
+          FROM "Appointment" a
+          LEFT JOIN "Service" s ON s.id = a."serviceId"
+          LEFT JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+        ),
+        single_sub_rev AS (
+          SELECT COALESCE(SUM(sso.price), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "ServiceOption" so ON so.id = a."serviceOptionId"
+          JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+            AND sso.id = ANY(a."selectedSubOptions")
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM "AppointmentItem" ai WHERE ai."appointmentId" = a.id)
+        ),
+        multi_item_rev AS (
+          SELECT COALESCE(SUM(
+            (COALESCE(s.price, 0) + COALESCE(so.price, 0)) * ai.quantity
+          ), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+          LEFT JOIN "Service" s ON s.id = ai."serviceId"
+          LEFT JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+        ),
+        multi_sub_rev AS (
+          SELECT COALESCE(SUM(sso.price), 0)::float AS total
+          FROM "Appointment" a
+          JOIN "AppointmentItem" ai ON ai."appointmentId" = a.id
+          JOIN "ServiceOption" so ON so.id = ai."serviceOptionId"
+          JOIN "ServiceSubOption" sso ON sso."serviceOptionId" = so.id
+            AND sso.id = ANY(ai."selectedSubOptions")
+          WHERE a."tenantId" = ${tenantId}
+            AND a.status != 'CANCELLED'
+        )
+        SELECT
+          (SELECT total FROM single_item_rev) AS single_rev,
+          (SELECT total FROM multi_item_rev) AS multi_rev,
+          (SELECT total FROM single_sub_rev) AS sub_rev,
+          (SELECT total FROM multi_sub_rev) AS multi_sub_rev
+      `;
+      const revRow = revenueRows[0];
+      totalRevenue = (revRow?.single_rev || 0) + (revRow?.multi_rev || 0) + (revRow?.sub_rev || 0) + (revRow?.multi_sub_rev || 0);
+    }
 
     const totalAll = statusCounts.reduce((sum, item) => sum + item._count, 0);
 

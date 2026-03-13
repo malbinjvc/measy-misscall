@@ -153,12 +153,16 @@ function CustomerPanel({
     staleTime: 30000,
   });
 
-  // Accumulate items on load more
+  // Accumulate items on load more — cap at 500 to prevent unbounded memory growth
+  const MAX_ACCUMULATED = 500;
   useEffect(() => {
     if (!data?.data) return;
     const items = data.data.bookings || data.data.smsLogs || data.data.calls || [];
     if (cursor) {
-      setAllItems((prev) => [...prev, ...items]);
+      setAllItems((prev) => {
+        const combined = [...prev, ...items];
+        return combined.length > MAX_ACCUMULATED ? combined.slice(0, MAX_ACCUMULATED) : combined;
+      });
     } else {
       setAllItems(items);
     }

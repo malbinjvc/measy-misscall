@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { getWalletRatePerUnit } from "@/lib/wallet";
 
 // GET wallet balance and recent transactions
 export async function GET(req: NextRequest) {
@@ -53,10 +54,13 @@ export async function GET(req: NextRequest) {
     const subscription = tenant?.subscription;
     const totalCount = wallet._count.transactions;
 
+    const ratePerUnit = await getWalletRatePerUnit();
+
     // Usage comes from atomic counters — no COUNT queries needed
     return NextResponse.json({
       success: true,
       data: {
+        ratePerUnit,
         wallet: {
           balance: Number(wallet.balance),
           autoRecharge: wallet.autoRecharge,

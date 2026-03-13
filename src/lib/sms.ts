@@ -3,6 +3,7 @@ import prisma from "./prisma";
 import { getTwilioClient } from "./twilio";
 import { getBaseUrl, getShopUrl, normalizePhoneForStorage } from "./utils";
 import { chargeForUsage } from "./wallet";
+import { withRetry } from "./retry";
 
 const OPT_OUT_NOTICE = "\nReply STOP to opt out.";
 
@@ -33,12 +34,15 @@ export async function sendSms({
   }
 
   try {
-    const message = await client.messages.create({
-      body,
-      to,
-      from: fromNumber,
-      statusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/sms-status`,
-    });
+    const message = await withRetry(
+      () => client.messages.create({
+        body,
+        to,
+        from: fromNumber,
+        statusCallback: `${process.env.NEXT_PUBLIC_APP_URL}/api/twilio/sms-status`,
+      }),
+      { label: "twilio-sms" }
+    );
 
     // Log the SMS
     const smsLog = await prisma.smsLog.create({

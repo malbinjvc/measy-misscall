@@ -2,8 +2,29 @@ import prisma from "./prisma";
 import { stripe } from "./stripe";
 import { calculateTotalWithFees } from "./tax";
 
-const RATE_PER_UNIT = 0.035; // $0.035 CAD per SMS or per call minute
-// Monthly premium and tax are handled in src/lib/tax.ts
+const DEFAULT_RATE_PER_UNIT = 0.035; // fallback if PlatformSettings not configured
+
+/** Cached rate — refreshes every 5 minutes */
+let cachedRate: { value: number; expiresAt: number } | null = null;
+const RATE_CACHE_TTL_MS = 300_000; // 5 min
+
+async function getRatePerUnit(): Promise<number> {
+  if (cachedRate && Date.now() < cachedRate.expiresAt) return cachedRate.value;
+  try {
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "platform-settings" },
+      select: { walletRatePerUnit: true },
+    });
+    const rate = settings?.walletRatePerUnit ? Number(settings.walletRatePerUnit) : DEFAULT_RATE_PER_UNIT;
+    cachedRate = { value: rate, expiresAt: Date.now() + RATE_CACHE_TTL_MS };
+    return rate;
+  } catch {
+    return DEFAULT_RATE_PER_UNIT;
+  }
+}
+
+// Exported for backward compat (tests, display). Prefer getRatePerUnit() for runtime.
+const RATE_PER_UNIT = DEFAULT_RATE_PER_UNIT;
 
 /**
  * Get or create a wallet for a tenant.
@@ -89,16 +110,19 @@ export async function chargeForUsage(
   tenantId: string,
   usageType: "sms" | "call",
   units: number = 1
-): Promise<{ charged: boolean; amount: number; withinFreeTier: boolean }> {
+): Promise<{ charged: boolean; amount: number; withinFreeTier: boolean; insufficientBalance?: boolean }> {
   // Ensure wallet exists and counters are for current billing period
   await getOrCreateWallet(tenantId);
   await ensureCurrentPeriod(tenantId);
 
-  // Get plan limits
-  const subscription = await prisma.subscription.findUnique({
-    where: { tenantId },
-    select: { plan: { select: { maxSms: true, maxCalls: true } } },
-  });
+  // Get plan limits and dynamic rate
+  const [subscription, ratePerUnit] = await Promise.all([
+    prisma.subscription.findUnique({
+      where: { tenantId },
+      select: { plan: { select: { maxSms: true, maxCalls: true } } },
+    }),
+    getRatePerUnit(),
+  ]);
 
   const limit = usageType === "sms"
     ? (subscription?.plan?.maxSms || 0)
@@ -130,7 +154,21 @@ export async function chargeForUsage(
       return { charged: false, amount: 0, withinFreeTier: true };
     }
 
-    const chargeAmount = chargeableUnits * RATE_PER_UNIT;
+    const chargeAmount = chargeableUnits * ratePerUnit;
+
+    // Guard: check balance before charging — refuse if insufficient funds
+    const current = await tx.wallet.findUnique({
+      where: { tenantId },
+      select: { balance: true },
+    });
+    if (!current || Number(current.balance) < chargeAmount) {
+      // Rollback the counter increment since we can't charge
+      await tx.wallet.update({
+        where: { tenantId },
+        data: { [counterField]: { decrement: units } },
+      });
+      return { charged: false, amount: 0, withinFreeTier: false, insufficientBalance: true };
+    }
 
     // Atomic balance decrement in same transaction
     const charged = await tx.wallet.update({
@@ -273,4 +311,4 @@ async function chargeAndAddFunds(
   return false;
 }
 
-export { RATE_PER_UNIT };
+export { RATE_PER_UNIT, getRatePerUnit as getWalletRatePerUnit };

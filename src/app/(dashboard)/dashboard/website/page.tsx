@@ -1,9 +1,15 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
 import { LoadingPage } from "@/components/shared/loading";
-import { WebsiteBuilder } from "@/components/website-builder";
+
+// Lazy-load WebsiteBuilder — heavy component (TipTap, DnD, color pickers)
+const WebsiteBuilder = dynamic(
+  () => import("@/components/website-builder").then((m) => m.WebsiteBuilder),
+  { loading: () => <LoadingPage /> }
+);
 
 export default function WebsitePage() {
   const queryClient = useQueryClient();

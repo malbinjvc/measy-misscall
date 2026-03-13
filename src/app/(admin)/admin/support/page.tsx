@@ -255,7 +255,7 @@ export default function AdminSupportPage() {
       return json.data;
     },
     enabled: !!selectedTicketId,
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   });
 
   useQuery({
@@ -268,7 +268,7 @@ export default function AdminSupportPage() {
       return json;
     },
     enabled: !!selectedTicketId,
-    refetchInterval: 2000,
+    refetchInterval: 5000,
   });
 
   const replyMutation = useMutation({

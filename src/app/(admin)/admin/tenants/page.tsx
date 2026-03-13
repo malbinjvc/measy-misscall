@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient, UseMutationResult } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Building2, ChevronLeft, ChevronRight, Check, X, Trash2, Eye } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Check, X, Trash2, Eye, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
 interface TenantRow {
@@ -38,13 +38,21 @@ type TenantDeleteMutation = UseMutationResult<unknown, Error, string>;
 export default function AdminTenantsPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<TenantsResponse>({
-    queryKey: ["admin-tenants", page, statusFilter],
+  const handleSearch = useCallback(() => {
+    setSearch(searchInput.trim());
+    setPage(1);
+  }, [searchInput]);
+
+  const { data, isLoading, isError } = useQuery<TenantsResponse>({
+    queryKey: ["admin-tenants", page, statusFilter, search],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) params.set("status", statusFilter);
+      if (search) params.set("search", search);
       const res = await fetch(`/api/admin/tenants?${params}`);
       if (!res.ok) throw new Error("Request failed");
       const json = await res.json();
@@ -84,6 +92,21 @@ export default function AdminTenantsPage() {
     <div>
       <PageHeader title="Tenants" description="Manage all business tenants" />
       <div className="flex flex-wrap gap-3 mb-4">
+        <div className="relative flex gap-2">
+          <Input
+            className="w-64 pl-9"
+            placeholder="Search name, email, phone..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+          />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          {search && (
+            <Button variant="ghost" size="sm" onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}>
+              Clear
+            </Button>
+          )}
+        </div>
         <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
           <option value="">All Statuses</option>
           <option value="ONBOARDING">Onboarding</option>
@@ -93,7 +116,9 @@ export default function AdminTenantsPage() {
         </Select>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <EmptyState icon={<Building2 className="h-12 w-12" />} title="Failed to load tenants" description="Please try refreshing the page." />
+      ) : isLoading ? (
         <LoadingTable />
       ) : !data?.data?.length ? (
         <EmptyState icon={<Building2 className="h-12 w-12" />} title="No tenants" description="Tenants will appear here when they register." />

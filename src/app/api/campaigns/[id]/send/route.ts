@@ -68,9 +68,11 @@ export async function POST(
       );
     }
 
-    // Fetch all PENDING recipients
+    // Fetch PENDING recipients — limit to MAX_RECIPIENTS+1 so we can detect overflow
+    // without loading unbounded rows into memory
     const recipients = await prisma.campaignRecipient.findMany({
       where: { campaignId: id, status: "PENDING" },
+      take: MAX_RECIPIENTS + 1,
     });
 
     if (recipients.length === 0) {

@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { decrypt, isEncrypted } from "@/lib/crypto";
 import { uploadFile, fileExists, getFileUrl } from "@/lib/storage";
+import { withRetry } from "@/lib/retry";
 
 const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
 
@@ -36,32 +37,36 @@ async function synthesize(
   apiKey: string,
   voiceId: string
 ): Promise<Buffer | null> {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-        Accept: "audio/mpeg",
-      },
-      body: JSON.stringify({
-        text,
-        model_id: "eleven_monolingual_v1",
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-        },
-      }),
-    }
+  const response = await withRetry(
+    async () => {
+      const res = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json",
+            Accept: "audio/mpeg",
+          },
+          body: JSON.stringify({
+            text,
+            model_id: "eleven_monolingual_v1",
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.75,
+            },
+          }),
+        }
+      );
+      if (!res.ok) {
+        const err = new Error(`ElevenLabs API error: ${res.status} ${res.statusText}`);
+        (err as Error & { status: number }).status = res.status;
+        throw err;
+      }
+      return res;
+    },
+    { label: "elevenlabs-tts" }
   );
-
-  if (!response.ok) {
-    console.error(
-      `ElevenLabs API error: ${response.status} ${response.statusText}`
-    );
-    return null;
-  }
 
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer);

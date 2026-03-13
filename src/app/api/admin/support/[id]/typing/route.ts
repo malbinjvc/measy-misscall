@@ -13,7 +13,7 @@ export async function GET(
     return NextResponse.json({ success: false }, { status: 403 });
   }
   const { id } = await params;
-  const typing = getTyping(id, "ADMIN");
+  const typing = await getTyping(id, "ADMIN");
   return NextResponse.json({ success: true, typing });
 }
 
@@ -27,6 +27,6 @@ export async function POST(
     return NextResponse.json({ success: false }, { status: 403 });
   }
   const { id } = await params;
-  setTyping(id, "ADMIN", session.user?.name || "Admin");
+  await setTyping(id, "ADMIN", session.user?.name || "Admin");
   return NextResponse.json({ success: true });
 }

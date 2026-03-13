@@ -37,7 +37,7 @@ export default function SmsLogsPage() {
     cursorStackRef.current = [];
   }, []);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["sms-logs", page, statusFilter, currentCursor],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: "20" });
@@ -81,7 +81,9 @@ export default function SmsLogsPage() {
         </Select>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <EmptyState icon={<Mail className="h-12 w-12" />} title="Failed to load SMS logs" description="Please try refreshing the page." />
+      ) : isLoading ? (
         <LoadingTable />
       ) : !data?.data?.length ? (
         <EmptyState icon={<Mail className="h-12 w-12" />} title="No SMS logs" description="SMS messages will appear here when sent to customers." />

@@ -1,38 +1,42 @@
-// In-memory typing indicator store
-// Uses globalThis to persist across Next.js hot reloads (same pattern as Prisma client)
+// Typing indicator store — Redis-backed for multi-instance consistency
+// Falls back to in-memory when REDIS_URL is not configured (dev mode)
 
+import { redis } from "./redis";
+
+const TYPING_TTL = 5; // 5 seconds (Redis uses seconds)
+const KEY_PREFIX = "typing:";
+
+// In-memory fallback for development (no Redis)
 interface TypingEntry {
-  role: string;
   name: string;
   expiresAt: number;
 }
+const memoryFallback = new Map<string, TypingEntry>();
 
-const globalForTyping = globalThis as unknown as {
-  __typingMap: Map<string, TypingEntry>;
-};
+export async function setTyping(ticketId: string, role: string, name: string) {
+  const key = `${KEY_PREFIX}${ticketId}:${role}`;
 
-if (!globalForTyping.__typingMap) {
-  globalForTyping.__typingMap = new Map();
+  if (redis) {
+    await redis.set(key, name, "EX", TYPING_TTL);
+  } else {
+    memoryFallback.set(key, { name, expiresAt: Date.now() + TYPING_TTL * 1000 });
+  }
 }
 
-const typingMap = globalForTyping.__typingMap;
-
-const TYPING_TTL = 5000; // 5 seconds
-
-export function setTyping(ticketId: string, role: string, name: string) {
-  typingMap.set(`${ticketId}:${role}`, {
-    role,
-    name,
-    expiresAt: Date.now() + TYPING_TTL,
-  });
-}
-
-export function getTyping(ticketId: string, forRole: string): { name: string } | null {
+export async function getTyping(ticketId: string, forRole: string): Promise<{ name: string } | null> {
   // Return the OTHER party's typing status
   const otherRole = forRole === "ADMIN" ? "TENANT" : "ADMIN";
-  const entry = typingMap.get(`${ticketId}:${otherRole}`);
+  const key = `${KEY_PREFIX}${ticketId}:${otherRole}`;
+
+  if (redis) {
+    const name = await redis.get(key);
+    return name ? { name } : null;
+  }
+
+  // In-memory fallback
+  const entry = memoryFallback.get(key);
   if (!entry || entry.expiresAt < Date.now()) {
-    if (entry) typingMap.delete(`${ticketId}:${otherRole}`);
+    if (entry) memoryFallback.delete(key);
     return null;
   }
   return { name: entry.name };

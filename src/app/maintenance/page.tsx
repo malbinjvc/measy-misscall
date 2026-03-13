@@ -8,7 +8,7 @@ function MaintenanceContent() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("from") || "/";
 
-  // Poll every 10 seconds — when maintenance ends, redirect back to original page
+  // Poll every 30 seconds — when maintenance ends, redirect back to original page
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -20,7 +20,7 @@ function MaintenanceContent() {
       } catch {
         // ignore fetch errors
       }
-    }, 10_000);
+    }, 30_000);
 
     return () => clearInterval(interval);
   }, [returnTo]);

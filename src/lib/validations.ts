@@ -193,6 +193,7 @@ export const platformSettingsSchema = z.object({
   dashboardBannerType: z.enum(["image", "video"]).optional(),
   dashboardBannerLink: z.string().url("Invalid URL").optional().nullable().or(z.literal("")),
   dashboardBannerEnabled: z.boolean().optional(),
+  walletRatePerUnit: z.number().min(0).max(1).optional(),
   maintenanceMode: z.boolean().optional(),
 });
 

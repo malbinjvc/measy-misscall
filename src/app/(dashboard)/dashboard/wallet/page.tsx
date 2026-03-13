@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 interface WalletData {
+  ratePerUnit: number;
   wallet: {
     balance: number;
     autoRecharge: boolean;
@@ -117,6 +118,7 @@ export default function WalletPage() {
   const transactions = data?.transactions || [];
   const pagination = data?.pagination;
 
+  const rate = data?.ratePerUnit || 0.035;
   const smsOverage = Math.max(0, (usage?.smsUsed || 0) - (usage?.smsLimit || 0));
   const callsOverage = Math.max(0, (usage?.callsUsed || 0) - (usage?.callsLimit || 0));
 
@@ -178,7 +180,7 @@ export default function WalletPage() {
           </div>
           {smsOverage > 0 && (
             <p className="text-xs text-orange-500 mt-2">
-              {smsOverage} extra @ $0.035/msg = ${(smsOverage * 0.035).toFixed(2)}
+              {smsOverage} extra @ ${rate}/msg = ${(smsOverage * rate).toFixed(2)}
             </p>
           )}
           <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
@@ -207,7 +209,7 @@ export default function WalletPage() {
           </div>
           {callsOverage > 0 && (
             <p className="text-xs text-orange-500 mt-2">
-              {callsOverage} extra calls @ $0.035/call-min
+              {callsOverage} extra calls @ ${rate}/call-min
             </p>
           )}
           <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
@@ -335,7 +337,7 @@ export default function WalletPage() {
           </div>
           <div className="rounded-lg border bg-blue-50 dark:bg-blue-950/20 p-4 mt-4">
             <p className="text-sm text-blue-800 dark:text-blue-200">
-              <strong>Usage pricing:</strong> Each SMS and each call costs <strong>$0.035 CAD</strong> after
+              <strong>Usage pricing:</strong> Each SMS and each call costs <strong>${rate} CAD</strong> after
               your free tier is exhausted. Free tier resets each billing period.
             </p>
           </div>

@@ -187,7 +187,7 @@ function CreateCampaignDialog({
   const { data: recipientData } = useQuery({
     queryKey: ["campaign-recipients", customerSearch],
     queryFn: async () => {
-      const params = new URLSearchParams({ pageSize: "200" });
+      const params = new URLSearchParams({ pageSize: "250" });
       if (customerSearch) params.set("search", customerSearch);
       const res = await fetch(`/api/campaigns/recipients?${params}`);
       if (!res.ok) throw new Error("Request failed");

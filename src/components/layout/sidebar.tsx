@@ -26,12 +26,13 @@ import { signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { useUnreadCount } from "@/hooks/use-unread-count";
 import { usePlanFeatures } from "@/hooks/use-plan-features";
+import { prefetchRoute } from "@/lib/prefetch-routes";
 
 interface SidebarLink {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
-  requiredFeature?: string; // If set, only show when plan includes this feature
+  requiredFeature?: string;
 }
 
 const sidebarLinks: SidebarLink[] = [
@@ -50,39 +51,11 @@ const sidebarLinks: SidebarLink[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
-const PREFETCH_ROUTES: Record<string, { queryKey: unknown[]; url: string; extractData?: boolean }> = {
-  "/dashboard/wallet": { queryKey: ["wallet", "1"], url: "/api/wallet?page=1&limit=15", extractData: true },
-  "/dashboard/appointments": { queryKey: ["appointments", 1, null], url: "/api/appointments?page=1&pageSize=20" },
-  "/dashboard/customers": { queryKey: ["customers", 1, ""], url: "/api/customers?page=1&pageSize=20" },
-  "/dashboard/calls": { queryKey: ["calls", 1, "", ""], url: "/api/calls?page=1&pageSize=20" },
-  "/dashboard/sms-logs": { queryKey: ["sms-logs", 1, ""], url: "/api/sms?page=1&pageSize=20" },
-  "/dashboard/services": { queryKey: ["services"], url: "/api/services" },
-  "/dashboard/campaigns": { queryKey: ["campaigns", 1], url: "/api/campaigns?page=1&pageSize=20" },
-  "/dashboard/staff": { queryKey: ["staff"], url: "/api/staff" },
-  "/dashboard/billing": { queryKey: ["tenant"], url: "/api/tenant", extractData: true },
-  "/dashboard/website": { queryKey: ["tenant"], url: "/api/tenant", extractData: true },
-  "/dashboard/settings": { queryKey: ["tenant"], url: "/api/tenant", extractData: true },
-};
-
 export function Sidebar() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
 
-  const prefetch = (href: string) => {
-    const config = PREFETCH_ROUTES[href];
-    if (config) {
-      queryClient.prefetchQuery({
-        queryKey: config.queryKey,
-        queryFn: async () => {
-          const res = await fetch(config.url);
-          if (!res.ok) return null;
-          const json = await res.json();
-          return config.extractData ? (json.success ? json.data : null) : json;
-        },
-        staleTime: 60000,
-      });
-    }
-  };
+  const prefetch = (href: string) => prefetchRoute(queryClient, href);
 
   const { data: unreadCount } = useUnreadCount();
   const { hasFeature } = usePlanFeatures();

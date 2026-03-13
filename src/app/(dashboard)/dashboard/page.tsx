@@ -87,7 +87,7 @@ export default function DashboardPage() {
     staleTime: 60_000,
   });
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isError, refetch } = useQuery({
     queryKey: ["dashboard-stats", preset, dateMode],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -260,7 +260,12 @@ export default function DashboardPage() {
       )}
 
       {/* Stat Cards */}
-      {isLoading ? (
+      {isError ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <p className="text-sm text-muted-foreground mb-2">Failed to load stats</p>
+          <button onClick={() => refetch()} className="text-sm text-primary hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 7 }).map((_, i) => (
             <StatsCardSkeleton key={i} />

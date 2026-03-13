@@ -227,7 +227,7 @@ model Tenant {
   updatedAt           DateTime       @updatedAt
 
   @@index([slug])
-  @@index([status])
+  @@index([status, createdAt])
 }
 
 model Service {
@@ -474,6 +474,8 @@ model PlatformSettings {
   dashboardBannerType   String?  @default("image") // "image" or "video"
   dashboardBannerLink   String?
   dashboardBannerEnabled Boolean @default(false)
+  // Wallet / Usage Pricing
+  walletRatePerUnit     Decimal? @default(0.035) @db.Decimal(10, 4) // CAD per SMS or call minute
   // General
   maintenanceMode       Boolean  @default(false)
   createdAt             DateTime @default(now())

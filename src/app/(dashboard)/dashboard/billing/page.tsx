@@ -28,7 +28,7 @@ export default function BillingPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
-  const { data: tenant, isLoading: tenantLoading } = useQuery({
+  const { data: tenant, isLoading: tenantLoading, isError: tenantError } = useQuery({
     queryKey: ["tenant"],
     queryFn: async () => {
       const res = await fetch("/api/tenant");
@@ -136,6 +136,12 @@ export default function BillingPage() {
   }
 
   if (tenantLoading || plansLoading) return <LoadingPage />;
+  if (tenantError) return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <p className="text-lg font-semibold mb-1">Failed to load billing</p>
+      <p className="text-sm text-muted-foreground">Please try refreshing the page.</p>
+    </div>
+  );
 
   const sub = tenant?.subscription;
   const currentPlan = sub?.plan;
